@@ -28,27 +28,40 @@ MainWindow::MainWindow(QWidget *parent)
       connect(action, &QAction::triggered, this, &MainWindow::OnFileNew);
       newMenu->addAction(action);
 
-
-      // Open
-      action = new QAction("&Open", this);
+    // Open
+    QMenu * openMenu = fileMenu->addMenu("Open");
+      // Open Project
+      action = new QAction("Project", this);
       connect(action, &QAction::triggered, this, &MainWindow::OnFileOpen);
-      fileMenu->addAction(action);
+      openMenu->addAction(action);
+      // Open Scene
+      action = new QAction("Scene", this);
+      connect(action, &QAction::triggered, this, &MainWindow::OnFileOpen);
+      openMenu->addAction(action);
+      // Open Project
+      action = new QAction("Take", this);
+      connect(action, &QAction::triggered, this, &MainWindow::OnFileOpen);
+      openMenu->addAction(action);
 
-      // Save
-      action = new QAction("&Save", this);
-      connect(action, &QAction::triggered, this, &MainWindow::OnFileSave);
-      fileMenu->addAction(action);
+    // Save
+    action = new QAction("Save", this);
+    connect(action, &QAction::triggered, this, &MainWindow::OnFileSave);
+    fileMenu->addAction(action);
 
     // separator
     fileMenu->addSeparator();
 
     // Exit
-    action = new QAction("&Exit", this);
+    action = new QAction("Exit", this);
     connect(action, &QAction::triggered, this, &MainWindow::close);
     fileMenu->addAction(action);
 
   QMenu * editMenu = menuBar->addMenu("Edit");
+  QMenu * viewMenu = menuBar->addMenu("View");
   QMenu * helpMenu = menuBar->addMenu("Help");
+    action = new QAction("About Brick", this);
+    connect(action, &QAction::triggered, this, &MainWindow::OnFileOpen);
+    helpMenu->addAction(action);
 }
 
 MainWindow::~MainWindow() {
@@ -65,4 +78,7 @@ void MainWindow::OnFileOpen() {
 
 void MainWindow::OnFileSave() {
   statusBar()->showMessage("File -> Save");
+}
+void MainWindow::OnHelpAbout() {
+
 }

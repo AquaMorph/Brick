@@ -20,6 +20,7 @@ private:
   void OnFileNew();
   void OnFileOpen();
   void OnFileSave();
+  void OnHelpAbout();
 };
 
 
