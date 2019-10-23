@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
+#include "aboutdialog.h"
 
 MainWindow::MainWindow(QWidget *parent)
   : QMainWindow(parent)
@@ -60,7 +61,7 @@ MainWindow::MainWindow(QWidget *parent)
   QMenu * viewMenu = menuBar->addMenu("View");
   QMenu * helpMenu = menuBar->addMenu("Help");
     action = new QAction("About Brick", this);
-    connect(action, &QAction::triggered, this, &MainWindow::OnFileOpen);
+    connect(action, &QAction::triggered, this, &MainWindow::OnHelpAbout);
     helpMenu->addAction(action);
 }
 
@@ -80,5 +81,7 @@ void MainWindow::OnFileSave() {
   statusBar()->showMessage("File -> Save");
 }
 void MainWindow::OnHelpAbout() {
-
+  AboutDialog aboutdialog;
+  aboutdialog.setModal(true);
+  aboutdialog.exec();
 }
