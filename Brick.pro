@@ -17,16 +17,32 @@ DEFINES += QT_DEPRECATED_WARNINGS
 
 SOURCES += \
     aboutdialog.cpp \
+    edsdkwrapper.cpp \
     main.cpp \
     mainwindow.cpp
 
 HEADERS += \
     aboutdialog.h \
+    edsdkwrapper.h \
     mainwindow.h
+win32:HEADERS += \
+    EDSDK/Header/EDSDK.h \
+    EDSDK/Header/EDSDKErrors.h \
+    EDSDK/Header/EDSDKTypes.h
 
 FORMS += \
     aboutdialog.ui \
     mainwindow.ui
+
+win32:LIBS += \
+     $$PWD/EDSDK/Library/EDSDK.lib \
+#     $$PWD/EDSDK/Dll/EDSDK.dll \
+#     $$PWD/EDSDK/Dll/EdsImage.dll
+
+win32:INCLUDEPATH += \
+#    EDSDK/Library \
+#    EDSDK/Dll/ \
+    EDSDK/Header
 
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin

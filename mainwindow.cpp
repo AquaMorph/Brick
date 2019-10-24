@@ -63,6 +63,58 @@ MainWindow::MainWindow(QWidget *parent)
     action = new QAction("About Brick", this);
     connect(action, &QAction::triggered, this, &MainWindow::OnHelpAbout);
     helpMenu->addAction(action);
+  EdsError err = EDS_ERR_OK;
+  EdsCameraRef camera = NULL;
+  bool isSDKLoaded = false;
+  // Initialize SDK
+  err = EdsInitializeSDK();
+  if(err == EDS_ERR_OK) {
+    isSDKLoaded = true;
+  }
+  // Get first camera
+  if(err == EDS_ERR_OK) {
+    // See Sample 2.
+    err = getFirstCamera (&camera);
+  }
+  // Set Object event handler
+/*  if(err == EDS_ERR_OK) {
+    err = EdsSetObjectEventHandler(camera, kEdsObejctEvent_All,
+    handleObjectEvent, NULL);
+  }
+  // Set Property event handler
+  if(err == EDS_ERR_OK) {
+    err = EdsSetPropertyEventHandler(camera, kEdsPropertyEvent_All,
+    handlePropertyEvent, NULL);
+  }
+  // Set State event handler
+  if(err == EDS_ERR_OK) {
+    err = EdsSetCameraStateEventHandler(camera, kEdsStateEvent_All,
+    handleStateEvent, NULL);
+  }*/
+  // Open session with camera
+  if(err == EDS_ERR_OK) {
+    err = EdsOpenSession(camera);
+  }
+  //Take a photo
+  //if(err == EDS_ERR_OK) {
+  //  err = takePicture(camera);
+  //}
+
+  // Set camera name in status bar
+  statusBar()->showMessage(getCameraName(camera));
+
+  // Close session with camera
+  if(err == EDS_ERR_OK) {
+    err = EdsCloseSession(camera);
+  }
+  // Release camera
+  if(camera != NULL) {
+    EdsRelease(camera);
+  }
+  // Terminate SDK
+  if(isSDKLoaded) {
+    EdsTerminateSDK();
+  }
 }
 
 MainWindow::~MainWindow() {
