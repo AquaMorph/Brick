@@ -67,6 +67,31 @@ int main(int argc, char* argv[]) {
       background-color: #8f3028;
       color: #ffffff;
     }
+
+    QPushButton {
+      padding: 7px 14px;
+      border: 1px solid #444444;
+      border-radius: 3px;
+      background-color: #202020;
+      color: #f2f2f2;
+    }
+
+    QPushButton:hover {
+      border-color: #a23b31;
+      background-color: #8f3028;
+      color: #ffffff;
+    }
+
+    QPushButton:pressed {
+      background-color: #67221d;
+      color: #ffffff;
+    }
+
+    QPushButton:disabled {
+      border-color: #292929;
+      background-color: #141414;
+      color: #707070;
+    }
   )");
 
   MainWindow window;
