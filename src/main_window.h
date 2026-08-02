@@ -7,6 +7,7 @@
 #include <optional>
 
 class QListWidget;
+class QLabel;
 class QPushButton;
 
 class MainWindow : public QMainWindow {
@@ -30,8 +31,10 @@ class MainWindow : public QMainWindow {
   void updateShotActions();
   void createTake();
   void deleteTake();
+  void selectTake();
   void refreshTakes(int selectedRow = -1);
   void updateTakeActions();
+  void updateActiveTakeViews();
   void setProject(Project project);
 
   std::optional<Project> project_;
@@ -50,4 +53,7 @@ class MainWindow : public QMainWindow {
   QListWidget* takeList_ = nullptr;
   QPushButton* newTakeButton_ = nullptr;
   QPushButton* deleteTakeButton_ = nullptr;
+  QPushButton* selectTakeButton_ = nullptr;
+  QLabel* cinematographyTakeLabel_ = nullptr;
+  QLabel* animationTakeLabel_ = nullptr;
 };

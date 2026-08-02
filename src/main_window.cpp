@@ -142,9 +142,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   newTakeButton_->setObjectName("newTakeButton");
   deleteTakeButton_ = new QPushButton("Delete", directTab);
   deleteTakeButton_->setObjectName("deleteTakeButton");
+  selectTakeButton_ = new QPushButton("Select", directTab);
+  selectTakeButton_->setObjectName("selectTakeButton");
   takeActions->addWidget(newTakeButton_);
   takeActions->addWidget(deleteTakeButton_);
   takeActions->addStretch();
+  takeActions->addWidget(selectTakeButton_);
   takePanel->addLayout(takeActions);
   directLayout->addLayout(takePanel, 1);
 
@@ -181,13 +184,32 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   connect(newTakeButton_, &QPushButton::clicked, this,
           [this] { createTake(); });
   connect(deleteTakeButton_, &QPushButton::clicked, this,
-          [this] { deleteTake(); });
+           [this] { deleteTake(); });
+  connect(selectTakeButton_, &QPushButton::clicked, this,
+          [this] { selectTake(); });
+  connect(takeList_, &QListWidget::itemDoubleClicked, this,
+          [this] { selectTake(); });
   connect(takeList_, &QListWidget::currentRowChanged, this,
           [this] { updateTakeActions(); });
 
+  auto createTakeTab = [tabs, &headingFont](const QString& heading,
+                                            QLabel** takeLabel) {
+    auto* tab = new QWidget(tabs);
+    auto* layout = new QVBoxLayout(tab);
+    layout->setContentsMargins(24, 24, 24, 24);
+    auto* title = new QLabel(heading, tab);
+    title->setFont(headingFont);
+    layout->addWidget(title);
+    *takeLabel = new QLabel("No active take selected", tab);
+    layout->addWidget(*takeLabel);
+    layout->addStretch();
+    return tab;
+  };
+
   tabs->addTab(directTab, "Direct");
-  tabs->addTab(new QWidget(tabs), "Cinematography");
-  tabs->addTab(new QWidget(tabs), "Animation");
+  tabs->addTab(createTakeTab("Cinematography", &cinematographyTakeLabel_),
+               "Cinematography");
+  tabs->addTab(createTakeTab("Animation", &animationTakeLabel_), "Animation");
   setCentralWidget(tabs);
 
   updateSceneActions();
@@ -325,6 +347,7 @@ void MainWindow::deleteScene() {
     return;
   }
   refreshScenes(std::min(row, static_cast<int>(project_->scenes().size()) - 1));
+  updateActiveTakeViews();
 }
 
 
@@ -341,6 +364,7 @@ void MainWindow::moveScene(int offset) {
     return;
   }
   refreshScenes(to);
+  updateActiveTakeViews();
 }
 
 
@@ -447,6 +471,7 @@ void MainWindow::deleteShot() {
   }
   refreshShots(std::min(
       shotRow, static_cast<int>(project_->shots(sceneRow).size()) - 1));
+  updateActiveTakeViews();
 }
 
 
@@ -464,6 +489,7 @@ void MainWindow::moveShot(int offset) {
     return;
   }
   refreshShots(to);
+  updateActiveTakeViews();
 }
 
 
@@ -540,6 +566,24 @@ void MainWindow::deleteTake() {
   }
   refreshTakes(std::min(takeRow,
                         project_->takeCount(sceneRow, shotRow) - 1));
+  updateActiveTakeViews();
+}
+
+
+void MainWindow::selectTake() {
+  const int sceneRow = sceneList_->currentRow();
+  const int shotRow = shotList_->currentRow();
+  const int takeRow = takeList_->currentRow();
+  if (!project_.has_value() || sceneRow < 0 || shotRow < 0 || takeRow < 0) {
+    return;
+  }
+
+  QString error;
+  if (!project_->selectTake(sceneRow, shotRow, takeRow, &error)) {
+    QMessageBox::critical(this, "Could Not Select Take", error);
+    return;
+  }
+  updateActiveTakeViews();
 }
 
 
@@ -568,6 +612,23 @@ void MainWindow::updateTakeActions() {
                        shotList_->currentRow() >= 0;
   newTakeButton_->setEnabled(hasShot);
   deleteTakeButton_->setEnabled(hasShot && takeList_->currentRow() >= 0);
+  selectTakeButton_->setEnabled(hasShot && takeList_->currentRow() >= 0);
+}
+
+
+void MainWindow::updateActiveTakeViews() {
+  QString text = "No active take selected";
+  if (project_.has_value() && project_->activeTake().has_value()) {
+    const auto& active = *project_->activeTake();
+    text = QString("Scene %1: %2  /  Shot %3: %4  /  Take %5")
+               .arg(active.sceneIndex + 1, 4, 10, QLatin1Char('0'))
+               .arg(project_->scenes()[active.sceneIndex])
+               .arg(active.shotIndex + 1, 4, 10, QLatin1Char('0'))
+               .arg(project_->shots(active.sceneIndex)[active.shotIndex])
+               .arg(active.takeIndex + 1, 4, 10, QLatin1Char('0'));
+  }
+  cinematographyTakeLabel_->setText(text);
+  animationTakeLabel_->setText(text);
 }
 
 
@@ -577,5 +638,13 @@ void MainWindow::setProject(Project project) {
   setWindowTitle(project_->name() + " - " +
                   QApplication::applicationDisplayName());
   statusBar()->showMessage(project_->directory());
-  refreshScenes(project_->scenes().empty() ? -1 : 0);
+  const int sceneRow = project_->activeTake().has_value()
+                           ? project_->activeTake()->sceneIndex
+                           : (project_->scenes().empty() ? -1 : 0);
+  refreshScenes(sceneRow);
+  if (project_->activeTake().has_value()) {
+    refreshShots(project_->activeTake()->shotIndex);
+    refreshTakes(project_->activeTake()->takeIndex);
+  }
+  updateActiveTakeViews();
 }

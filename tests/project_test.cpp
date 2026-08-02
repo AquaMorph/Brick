@@ -147,7 +147,25 @@ int main(int argc, char* argv[]) {
           "0001_FIRST_SCENE/0001_WIDE_SHOT/0002_TAKE/take.conf")),
       "Take creation did not write take.conf.");
   passed &= expect(created->createTake(0, 0, &error),
-                   "A third take was not created.");
+                    "A third take was not created.");
+  passed &= expect(created->selectTake(0, 0, 2, &error),
+                    "A take could not be selected.");
+  passed &= expect(created->activeTake() == Project::ActiveTake{0, 0, 2},
+                    "Selecting a take did not update the active take.");
+  {
+    QSettings projectConfig(QDir(projectPath).filePath("project.conf"),
+                            QSettings::IniFormat);
+    passed &= expect(projectConfig.value("Project/activeSceneIndex").toInt() == 0 &&
+                         projectConfig.value("Project/activeShotIndex").toInt() == 0 &&
+                         projectConfig.value("Project/activeTakeIndex").toInt() == 2,
+                     "Selecting a take was not saved in project.conf.");
+  }
+  opened = Project::open(projectPath, &error);
+  passed &= expect(opened.has_value() &&
+                       opened->activeTake() == Project::ActiveTake{0, 0, 2},
+                    "The active take was not restored when reopening.");
+  passed &= expect(!created->selectTake(0, 0, 3, &error),
+                    "Selecting an invalid take should fail.");
   QFile takeMarker(QDir(projectPath).filePath(
       "0001_FIRST_SCENE/0001_WIDE_SHOT/0003_TAKE/marker.txt"));
   passed &= expect(takeMarker.open(QIODevice::WriteOnly),
@@ -156,7 +174,9 @@ int main(int argc, char* argv[]) {
   passed &= expect(created->deleteTake(0, 0, 1, &error),
                    "A take could not be deleted.");
   passed &= expect(created->takeCount(0, 0) == 2,
-                   "Take deletion did not update the shot.");
+                    "Take deletion did not update the shot.");
+  passed &= expect(created->activeTake() == Project::ActiveTake{0, 0, 1},
+                    "Take deletion did not renumber the active take.");
   passed &= expect(
       QFile::exists(QDir(projectPath).filePath(
           "0001_FIRST_SCENE/0001_WIDE_SHOT/0002_TAKE/marker.txt")),
@@ -205,13 +225,17 @@ int main(int argc, char* argv[]) {
                        QFile::exists(QDir(projectPath).filePath(
                            "0001_FIRST_SCENE/0002_CLOSE_UP/"
                            "0002_TAKE/take.conf")),
-                   "Shot reorder did not preserve its takes.");
+                    "Shot reorder did not preserve its takes.");
+  passed &= expect(created->activeTake() == Project::ActiveTake{0, 1, 1},
+                    "Shot reorder did not move the active take.");
 
   passed &= expect(created->deleteShot(0, 0, &error),
                    "A shot could not be deleted.");
   passed &= expect(created->shots(0).size() == 1 &&
                        created->shots(0)[0] == "Close Up",
-                   "Shot deletion did not update the shot order.");
+                    "Shot deletion did not update the shot order.");
+  passed &= expect(created->activeTake() == Project::ActiveTake{0, 0, 1},
+                    "Shot deletion did not renumber the active take.");
   passed &= expect(
       QFile::exists(QDir(projectPath).filePath(
           "0001_FIRST_SCENE/0001_CLOSE_UP/marker.txt")),
@@ -229,6 +253,8 @@ int main(int argc, char* argv[]) {
   passed &= expect(created->scenes()[0] == "Closing Scene" &&
                         created->scenes()[1] == "first scene",
                     "Scene reorder did not update the project order.");
+  passed &= expect(created->activeTake() == Project::ActiveTake{1, 0, 1},
+                    "Scene reorder did not move the active take.");
   passed &= expect(
       QFile::exists(QDir(projectPath).filePath(
           "0002_FIRST_SCENE/marker.txt")),
@@ -247,6 +273,8 @@ int main(int argc, char* argv[]) {
   passed &= expect(created->scenes().size() == 1 &&
                         created->scenes()[0] == "first scene",
                     "Scene deletion did not update the project.");
+  passed &= expect(created->activeTake() == Project::ActiveTake{0, 0, 1},
+                    "Scene deletion did not renumber the active take.");
   passed &= expect(
       QFile::exists(QDir(projectPath).filePath(
           "0001_FIRST_SCENE/marker.txt")),

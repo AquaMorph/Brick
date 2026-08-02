@@ -147,12 +147,14 @@ bool renameContentDirectories(
 
 Project::Project(QString name, QString directory, std::vector<QString> scenes,
                   std::vector<std::vector<QString>> shots,
-                  std::vector<std::vector<int>> takeCounts)
+                  std::vector<std::vector<int>> takeCounts,
+                  std::optional<ActiveTake> activeTake)
     : name_(std::move(name)),
       directory_(std::move(directory)),
       scenes_(std::move(scenes)),
       shots_(std::move(shots)),
-      takeCounts_(std::move(takeCounts)) {}
+      takeCounts_(std::move(takeCounts)),
+      activeTake_(activeTake) {}
 
 
 std::optional<Project> Project::create(const QString& parentDirectory,
@@ -219,6 +221,15 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
   config.beginGroup("Project");
   const QString name = config.value("name").toString();
   const int formatVersion = config.value("formatVersion").toInt();
+  const bool hasActiveScene = config.contains("activeSceneIndex");
+  const bool hasActiveShot = config.contains("activeShotIndex");
+  const bool hasActiveTake = config.contains("activeTakeIndex");
+  std::optional<ActiveTake> activeTake;
+  if (hasActiveScene && hasActiveShot && hasActiveTake) {
+    activeTake = ActiveTake{config.value("activeSceneIndex").toInt(),
+                            config.value("activeShotIndex").toInt(),
+                            config.value("activeTakeIndex").toInt()};
+  }
   config.endGroup();
 
   if (config.status() != QSettings::NoError) {
@@ -237,6 +248,11 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
   }
   if (formatVersion != kProjectFormatVersion) {
     setError(error, "This project uses an unsupported format version.");
+    return std::nullopt;
+  }
+  if ((hasActiveScene || hasActiveShot || hasActiveTake) &&
+      !(hasActiveScene && hasActiveShot && hasActiveTake)) {
+    setError(error, "project.conf contains an incomplete active take.");
     return std::nullopt;
   }
 
@@ -336,8 +352,21 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
     takeCounts.push_back(std::move(sceneTakeCounts));
   }
 
+  if (activeTake.has_value() &&
+      (activeTake->sceneIndex < 0 ||
+       activeTake->sceneIndex >= static_cast<int>(scenes.size()) ||
+       activeTake->shotIndex < 0 ||
+       activeTake->shotIndex >=
+           static_cast<int>(shots[activeTake->sceneIndex].size()) ||
+       activeTake->takeIndex < 0 ||
+       activeTake->takeIndex >=
+           takeCounts[activeTake->sceneIndex][activeTake->shotIndex])) {
+    setError(error, "project.conf refers to an invalid active take.");
+    return std::nullopt;
+  }
+
   return Project(name, projectDirectory, std::move(scenes), std::move(shots),
-                 std::move(takeCounts));
+                 std::move(takeCounts), activeTake);
 }
 
 
@@ -357,6 +386,53 @@ const std::vector<QString>& Project::shots(int sceneIndex) const {
 
 int Project::takeCount(int sceneIndex, int shotIndex) const {
   return takeCounts_.at(sceneIndex).at(shotIndex);
+}
+
+
+const std::optional<Project::ActiveTake>& Project::activeTake() const {
+  return activeTake_;
+}
+
+
+bool Project::saveActiveTake(QString* error) {
+  QSettings config(QDir(directory_).filePath(kConfigFileName),
+                   QSettings::IniFormat);
+  config.beginGroup("Project");
+  if (activeTake_.has_value()) {
+    config.setValue("activeSceneIndex", activeTake_->sceneIndex);
+    config.setValue("activeShotIndex", activeTake_->shotIndex);
+    config.setValue("activeTakeIndex", activeTake_->takeIndex);
+  } else {
+    config.remove("activeSceneIndex");
+    config.remove("activeShotIndex");
+    config.remove("activeTakeIndex");
+  }
+  config.endGroup();
+  config.sync();
+  if (config.status() != QSettings::NoError) {
+    setError(error, "Brick could not update the active take in project.conf.");
+    return false;
+  }
+  return true;
+}
+
+
+bool Project::selectTake(int sceneIndex, int shotIndex, int takeIndex,
+                         QString* error) {
+  if (sceneIndex < 0 || sceneIndex >= static_cast<int>(scenes_.size()) ||
+      shotIndex < 0 || shotIndex >= static_cast<int>(shots_[sceneIndex].size()) ||
+      takeIndex < 0 || takeIndex >= takeCounts_[sceneIndex][shotIndex]) {
+    setError(error, "The selected take does not exist.");
+    return false;
+  }
+
+  const auto previous = activeTake_;
+  activeTake_ = ActiveTake{sceneIndex, shotIndex, takeIndex};
+  if (!saveActiveTake(error)) {
+    activeTake_ = previous;
+    return false;
+  }
+  return true;
 }
 
 
@@ -494,6 +570,16 @@ bool Project::deleteScene(int index, QString* error) {
   shots_.erase(shots_.begin() + index);
   takeCounts_.erase(takeCounts_.begin() + index);
   QDir(project.filePath(tombstone)).removeRecursively();
+  if (activeTake_.has_value()) {
+    if (activeTake_->sceneIndex == index) {
+      activeTake_.reset();
+    } else if (activeTake_->sceneIndex > index) {
+      --activeTake_->sceneIndex;
+    }
+    if (!saveActiveTake(error)) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -531,6 +617,20 @@ bool Project::moveScene(int from, int to, QString* error) {
   auto movedTakeCounts = std::move(takeCounts_[from]);
   takeCounts_.erase(takeCounts_.begin() + from);
   takeCounts_.insert(takeCounts_.begin() + to, std::move(movedTakeCounts));
+  if (activeTake_.has_value()) {
+    if (activeTake_->sceneIndex == from) {
+      activeTake_->sceneIndex = to;
+    } else if (from < to && activeTake_->sceneIndex > from &&
+               activeTake_->sceneIndex <= to) {
+      --activeTake_->sceneIndex;
+    } else if (to < from && activeTake_->sceneIndex >= to &&
+               activeTake_->sceneIndex < from) {
+      ++activeTake_->sceneIndex;
+    }
+    if (!saveActiveTake(error)) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -697,6 +797,16 @@ bool Project::deleteShot(int sceneIndex, int shotIndex, QString* error) {
   sceneShots.erase(sceneShots.begin() + shotIndex);
   takeCounts_[sceneIndex].erase(takeCounts_[sceneIndex].begin() + shotIndex);
   QDir(scene.filePath(tombstone)).removeRecursively();
+  if (activeTake_.has_value() && activeTake_->sceneIndex == sceneIndex) {
+    if (activeTake_->shotIndex == shotIndex) {
+      activeTake_.reset();
+    } else if (activeTake_->shotIndex > shotIndex) {
+      --activeTake_->shotIndex;
+    }
+    if (!saveActiveTake(error)) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -741,6 +851,20 @@ bool Project::moveShot(int sceneIndex, int from, int to, QString* error) {
   takeCounts_[sceneIndex].erase(takeCounts_[sceneIndex].begin() + from);
   takeCounts_[sceneIndex].insert(takeCounts_[sceneIndex].begin() + to,
                                  movedTakeCount);
+  if (activeTake_.has_value() && activeTake_->sceneIndex == sceneIndex) {
+    if (activeTake_->shotIndex == from) {
+      activeTake_->shotIndex = to;
+    } else if (from < to && activeTake_->shotIndex > from &&
+               activeTake_->shotIndex <= to) {
+      --activeTake_->shotIndex;
+    } else if (to < from && activeTake_->shotIndex >= to &&
+               activeTake_->shotIndex < from) {
+      ++activeTake_->shotIndex;
+    }
+    if (!saveActiveTake(error)) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -805,5 +929,16 @@ bool Project::deleteTake(int sceneIndex, int shotIndex, int takeIndex,
 
   --count;
   QDir(shot.filePath(tombstone)).removeRecursively();
+  if (activeTake_.has_value() && activeTake_->sceneIndex == sceneIndex &&
+      activeTake_->shotIndex == shotIndex) {
+    if (activeTake_->takeIndex == takeIndex) {
+      activeTake_.reset();
+    } else if (activeTake_->takeIndex > takeIndex) {
+      --activeTake_->takeIndex;
+    }
+    if (!saveActiveTake(error)) {
+      return false;
+    }
+  }
   return true;
 }

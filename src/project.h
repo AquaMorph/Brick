@@ -7,6 +7,14 @@
 
 class Project {
  public:
+  struct ActiveTake {
+    int sceneIndex;
+    int shotIndex;
+    int takeIndex;
+
+    bool operator==(const ActiveTake&) const = default;
+  };
+
   static std::optional<Project> create(const QString& parentDirectory,
                                        const QString& name, QString* error);
   static std::optional<Project> open(const QString& directory, QString* error);
@@ -16,6 +24,7 @@ class Project {
   [[nodiscard]] const std::vector<QString>& scenes() const;
   [[nodiscard]] const std::vector<QString>& shots(int sceneIndex) const;
   [[nodiscard]] int takeCount(int sceneIndex, int shotIndex) const;
+  [[nodiscard]] const std::optional<ActiveTake>& activeTake() const;
 
   bool createScene(const QString& name, QString* error);
   bool renameScene(int index, const QString& name, QString* error);
@@ -28,16 +37,20 @@ class Project {
   bool moveShot(int sceneIndex, int from, int to, QString* error);
   bool createTake(int sceneIndex, int shotIndex, QString* error);
   bool deleteTake(int sceneIndex, int shotIndex, int takeIndex,
-                  QString* error);
+                   QString* error);
+  bool selectTake(int sceneIndex, int shotIndex, int takeIndex, QString* error);
 
  private:
   Project(QString name, QString directory, std::vector<QString> scenes = {},
-          std::vector<std::vector<QString>> shots = {},
-          std::vector<std::vector<int>> takeCounts = {});
+           std::vector<std::vector<QString>> shots = {},
+           std::vector<std::vector<int>> takeCounts = {},
+           std::optional<ActiveTake> activeTake = std::nullopt);
+  bool saveActiveTake(QString* error);
 
   QString name_;
   QString directory_;
   std::vector<QString> scenes_;
   std::vector<std::vector<QString>> shots_;
   std::vector<std::vector<int>> takeCounts_;
+  std::optional<ActiveTake> activeTake_;
 };
