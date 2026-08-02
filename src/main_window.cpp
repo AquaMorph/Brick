@@ -13,6 +13,9 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QPainter>
+#include <QPen>
+#include <QPixmap>
 #include <QPushButton>
 #include <QSettings>
 #include <QStatusBar>
@@ -26,6 +29,28 @@
 namespace {
 
 constexpr auto kLastProjectKey = "Projects/lastOpenedDirectory";
+
+QIcon takeStatusIcon(bool active) {
+  auto drawCheck = [active](const QColor& color) {
+    QPixmap pixmap(12, 12);
+    pixmap.fill(Qt::transparent);
+    if (!active) {
+      return pixmap;
+    }
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    QPen pen(color, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    painter.setPen(pen);
+    painter.drawPolyline(QPolygonF{{2.0, 6.0}, {5.0, 9.0}, {10.0, 2.5}});
+    return pixmap;
+  };
+
+  QIcon icon;
+  icon.addPixmap(drawCheck(QColor("#d75a4e")), QIcon::Normal);
+  icon.addPixmap(drawCheck(Qt::white), QIcon::Selected);
+  return icon;
+}
 
 }  // namespace
 
@@ -135,6 +160,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   takeList_ = new QListWidget(directTab);
   takeList_->setObjectName("takeList");
   takeList_->setAlternatingRowColors(true);
+  takeList_->setIconSize(QSize(12, 12));
   takePanel->addWidget(takeList_, 1);
 
   auto* takeActions = new QHBoxLayout;
@@ -583,6 +609,7 @@ void MainWindow::selectTake() {
     QMessageBox::critical(this, "Could Not Select Take", error);
     return;
   }
+  refreshTakes(takeRow);
   updateActiveTakeViews();
 }
 
@@ -594,8 +621,11 @@ void MainWindow::refreshTakes(int selectedRow) {
   if (project_.has_value() && sceneRow >= 0 && shotRow >= 0) {
     const int count = project_->takeCount(sceneRow, shotRow);
     for (int index = 0; index < count; ++index) {
-      takeList_->addItem(QString("Take %1").arg(
-          index + 1, 4, 10, QLatin1Char('0')));
+      auto* item = new QListWidgetItem(QString("Take %1").arg(
+          index + 1, 4, 10, QLatin1Char('0')), takeList_);
+      item->setIcon(takeStatusIcon(
+          project_->activeTake() ==
+          Project::ActiveTake{sceneRow, shotRow, index}));
     }
     const int row = selectedRow >= 0 ? selectedRow : 0;
     if (row < takeList_->count()) {
