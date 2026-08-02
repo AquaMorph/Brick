@@ -15,10 +15,12 @@ constexpr int kProjectFormatVersion = 1;
 constexpr auto kConfigFileName = "project.conf";
 
 bool isValidProjectName(const QString& name) {
-  static const QRegularExpression invalidCharacters(R"([<>:"/\\|?*])");
-  return !name.isEmpty() && name == name.trimmed() && name != "." &&
-         name != ".." && !name.endsWith('.') &&
-         !invalidCharacters.match(name).hasMatch();
+  static const QRegularExpression validName(R"(^[A-Za-z0-9]+(?: +[A-Za-z0-9]+)*$)");
+  return validName.match(name).hasMatch();
+}
+
+QString directoryNameForProject(QString name) {
+  return name.replace(' ', '_');
 }
 
 void setError(QString* error, const QString& message) {
@@ -38,8 +40,7 @@ std::optional<Project> Project::create(const QString& parentDirectory,
                                        const QString& name, QString* error) {
   if (!isValidProjectName(name)) {
     setError(error,
-             "Enter a project name without leading or trailing spaces or any "
-             "of these characters: < > : \" / \\ | ? *");
+             "Project names may contain only letters, numbers, and spaces.");
     return std::nullopt;
   }
 
@@ -49,13 +50,14 @@ std::optional<Project> Project::create(const QString& parentDirectory,
     return std::nullopt;
   }
 
-  const QString projectDirectory = parent.absoluteFilePath(name);
+  const QString directoryName = directoryNameForProject(name);
+  const QString projectDirectory = parent.absoluteFilePath(directoryName);
   if (QFileInfo::exists(projectDirectory)) {
     setError(error, "A file or folder with that project name already exists.");
     return std::nullopt;
   }
 
-  if (!parent.mkdir(name)) {
+  if (!parent.mkdir(directoryName)) {
     setError(error, "Brick could not create the project folder.");
     return std::nullopt;
   }
@@ -71,7 +73,7 @@ std::optional<Project> Project::create(const QString& parentDirectory,
 
   if (config.status() != QSettings::NoError) {
     QFile::remove(configPath);
-    parent.rmdir(name);
+    parent.rmdir(directoryName);
     setError(error, "Brick could not write project.conf.");
     return std::nullopt;
   }
@@ -106,6 +108,12 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
   }
   if (!isValidProjectName(name)) {
     setError(error, "project.conf does not contain a valid project name.");
+    return std::nullopt;
+  }
+  if (directoryInfo.fileName() != directoryNameForProject(name)) {
+    setError(error,
+             "The project folder name must contain only letters, numbers, and "
+             "underscores and match the project name.");
     return std::nullopt;
   }
   if (formatVersion != kProjectFormatVersion) {

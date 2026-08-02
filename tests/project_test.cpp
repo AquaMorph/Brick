@@ -35,12 +35,15 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  const QString projectPath = QDir(temporaryDirectory.path()).filePath("Example Film");
+  const QString projectPath =
+      QDir(temporaryDirectory.path()).filePath("Example_Film");
   bool passed = true;
   passed &= expect(created->name() == "Example Film",
                    "The created project has the wrong name.");
   passed &= expect(QFile::exists(QDir(projectPath).filePath("project.conf")),
                    "Project creation did not write project.conf.");
+  passed &= expect(!projectPath.contains(' '),
+                   "The generated project folder contains a space.");
 
   auto opened = Project::open(projectPath, &error);
   passed &= expect(opened.has_value(), "The created project could not be opened.");
@@ -55,6 +58,9 @@ int main(int argc, char* argv[]) {
   passed &= expect(!Project::create(temporaryDirectory.path(), "bad/name", &error)
                         .has_value(),
                    "Creation should reject path separators in project names.");
+  passed &= expect(!Project::create(temporaryDirectory.path(), "Film-2", &error)
+                        .has_value(),
+                   "Creation should reject non-alphanumeric punctuation.");
   passed &= expect(!Project::open(temporaryDirectory.path(), &error).has_value(),
                    "Opening should reject a folder without project.conf.");
 
