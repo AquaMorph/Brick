@@ -28,6 +28,7 @@ The current stop motion program is saved in a directory that named with project 
 
 Config files for each type contain metadata needed each.
 
+```
 Project_Name
 ∟ project.conf
 ∟ 0001_SCENE_ONE
@@ -52,7 +53,7 @@ Project_Name
           ∟ 000001.cr3
           ∟ ...
           ∟ nnnnnn.cr3
-
+```
 
 ## UI
 
