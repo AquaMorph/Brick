@@ -141,6 +141,27 @@ int main(int argc, char* argv[]) {
       QFile::exists(QDir(projectPath).filePath(
           "0001_FIRST_SCENE/0001_WIDE_SHOT/0002_TAKE/take.conf")),
       "Take creation did not write take.conf.");
+  passed &= expect(created->createTake(0, 0, &error),
+                   "A third take was not created.");
+  QFile takeMarker(QDir(projectPath).filePath(
+      "0001_FIRST_SCENE/0001_WIDE_SHOT/0003_TAKE/marker.txt"));
+  passed &= expect(takeMarker.open(QIODevice::WriteOnly),
+                   "Could not create take content for the deletion test.");
+  takeMarker.close();
+  passed &= expect(created->deleteTake(0, 0, 1, &error),
+                   "A take could not be deleted.");
+  passed &= expect(created->takeCount(0, 0) == 2,
+                   "Take deletion did not update the shot.");
+  passed &= expect(
+      QFile::exists(QDir(projectPath).filePath(
+          "0001_FIRST_SCENE/0001_WIDE_SHOT/0002_TAKE/marker.txt")),
+      "Take deletion did not renumber or preserve the remaining take.");
+  passed &= expect(
+      !QFile::exists(QDir(projectPath).filePath(
+          "0001_FIRST_SCENE/0001_WIDE_SHOT/0003_TAKE")),
+      "Take deletion left the old take folder behind.");
+  passed &= expect(!created->deleteTake(0, 0, 2, &error),
+                   "Take deletion should reject invalid indexes.");
   passed &= expect(!created->createShot(0, "Wide Shot", &error),
                    "Shot creation should reject duplicate names.");
   passed &= expect(!created->createShot(0, "Bad/Shot", &error),

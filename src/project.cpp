@@ -48,6 +48,10 @@ QString directoryNameForTake(int index) {
   return QString("%1_TAKE").arg(index + 1, 4, 10, QLatin1Char('0'));
 }
 
+QString directoryNameForTake(int index, QString) {
+  return directoryNameForTake(index);
+}
+
 void setError(QString* error, const QString& message) {
   if (error != nullptr) {
     *error = message;
@@ -754,5 +758,45 @@ bool Project::createTake(int sceneIndex, int shotIndex, QString* error) {
   }
 
   ++count;
+  return true;
+}
+
+
+bool Project::deleteTake(int sceneIndex, int shotIndex, int takeIndex,
+                         QString* error) {
+  if (sceneIndex < 0 || sceneIndex >= static_cast<int>(scenes_.size()) ||
+      shotIndex < 0 || shotIndex >= static_cast<int>(shots_[sceneIndex].size()) ||
+      takeIndex < 0 || takeIndex >= takeCounts_[sceneIndex][shotIndex]) {
+    setError(error, "The selected take does not exist.");
+    return false;
+  }
+
+  int& count = takeCounts_[sceneIndex][shotIndex];
+  QDir shot(QDir(directory_).filePath(
+      directoryNameForScene(sceneIndex, scenes_[sceneIndex]) + '/' +
+      directoryNameForShot(shotIndex, shots_[sceneIndex][shotIndex])));
+  const QString deletedDirectory = directoryNameForTake(takeIndex);
+  const QString tombstone =
+      ".brick-take-delete-" + QUuid::createUuid().toString(QUuid::Id128);
+  if (!shot.rename(deletedDirectory, tombstone)) {
+    setError(error, "Brick could not prepare the take folder for deletion.");
+    return false;
+  }
+
+  std::vector<ContentDirectory> remaining;
+  remaining.reserve(count - 1);
+  for (int oldIndex = 0; oldIndex < count; ++oldIndex) {
+    if (oldIndex != takeIndex) {
+      remaining.push_back({directoryNameForTake(oldIndex), {}});
+    }
+  }
+  if (!renameContentDirectories(shot.absolutePath(), remaining, "take",
+                                directoryNameForTake, error)) {
+    shot.rename(tombstone, deletedDirectory);
+    return false;
+  }
+
+  --count;
+  QDir(shot.filePath(tombstone)).removeRecursively();
   return true;
 }

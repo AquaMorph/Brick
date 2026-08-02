@@ -29,6 +29,7 @@ class MainWindow : public QMainWindow {
   void refreshShots(int selectedRow = -1);
   void updateShotActions();
   void createTake();
+  void deleteTake();
   void refreshTakes(int selectedRow = -1);
   void updateTakeActions();
   void setProject(Project project);
@@ -48,4 +49,5 @@ class MainWindow : public QMainWindow {
   QPushButton* moveShotDownButton_ = nullptr;
   QListWidget* takeList_ = nullptr;
   QPushButton* newTakeButton_ = nullptr;
+  QPushButton* deleteTakeButton_ = nullptr;
 };

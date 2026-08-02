@@ -27,6 +27,8 @@ class Project {
   bool deleteShot(int sceneIndex, int shotIndex, QString* error);
   bool moveShot(int sceneIndex, int from, int to, QString* error);
   bool createTake(int sceneIndex, int shotIndex, QString* error);
+  bool deleteTake(int sceneIndex, int shotIndex, int takeIndex,
+                  QString* error);
 
  private:
   Project(QString name, QString directory, std::vector<QString> scenes = {},

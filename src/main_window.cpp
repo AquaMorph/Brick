@@ -140,7 +140,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   auto* takeActions = new QHBoxLayout;
   newTakeButton_ = new QPushButton("New Take", directTab);
   newTakeButton_->setObjectName("newTakeButton");
+  deleteTakeButton_ = new QPushButton("Delete", directTab);
+  deleteTakeButton_->setObjectName("deleteTakeButton");
   takeActions->addWidget(newTakeButton_);
+  takeActions->addWidget(deleteTakeButton_);
   takeActions->addStretch();
   takePanel->addLayout(takeActions);
   directLayout->addLayout(takePanel, 1);
@@ -177,6 +180,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
           });
   connect(newTakeButton_, &QPushButton::clicked, this,
           [this] { createTake(); });
+  connect(deleteTakeButton_, &QPushButton::clicked, this,
+          [this] { deleteTake(); });
+  connect(takeList_, &QListWidget::currentRowChanged, this,
+          [this] { updateTakeActions(); });
 
   tabs->addTab(directTab, "Direct");
   tabs->addTab(new QWidget(tabs), "Cinematography");
@@ -506,6 +513,36 @@ void MainWindow::createTake() {
 }
 
 
+void MainWindow::deleteTake() {
+  const int sceneRow = sceneList_->currentRow();
+  const int shotRow = shotList_->currentRow();
+  const int takeRow = takeList_->currentRow();
+  if (!project_.has_value() || sceneRow < 0 || shotRow < 0 || takeRow < 0) {
+    return;
+  }
+
+  QMessageBox confirmation(
+      QMessageBox::Warning, "Delete Take",
+      QString("Delete take %1 and all of its contents? This cannot be undone.")
+          .arg(takeRow + 1, 4, 10, QLatin1Char('0')),
+      QMessageBox::Cancel, this);
+  auto* deleteButton = confirmation.addButton(
+      "Delete", QMessageBox::DestructiveRole);
+  confirmation.exec();
+  if (confirmation.clickedButton() != deleteButton) {
+    return;
+  }
+
+  QString error;
+  if (!project_->deleteTake(sceneRow, shotRow, takeRow, &error)) {
+    QMessageBox::critical(this, "Could Not Delete Take", error);
+    return;
+  }
+  refreshTakes(std::min(takeRow,
+                        project_->takeCount(sceneRow, shotRow) - 1));
+}
+
+
 void MainWindow::refreshTakes(int selectedRow) {
   takeList_->clear();
   const int sceneRow = sceneList_->currentRow();
@@ -530,6 +567,7 @@ void MainWindow::updateTakeActions() {
                        sceneList_->currentRow() >= 0 &&
                        shotList_->currentRow() >= 0;
   newTakeButton_->setEnabled(hasShot);
+  deleteTakeButton_->setEnabled(hasShot && takeList_->currentRow() >= 0);
 }
 
 
