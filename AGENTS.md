@@ -22,6 +22,38 @@ Read `.agents/COMMITS.md` for documentation on how to commit.
 
 ## Program Structure
 
+## Film File System Structure
+
+The current stop motion program is saved in a directory that named with project name. Each project will contain a group of scenes. Each scene will contain a group of shots. Each shot still contain a group of takes.
+
+Config files for each type contain metadata needed each.
+
+Project_Name
+∟ project.conf
+∟ 0001_SCENE_ONE
+  ∟ scene.conf
+  ∟ 0001_SHOT_ONE
+    ∟ shot.conf
+    ∟ audio
+      ∟ scene.wav
+    ∟ 0001_TAKE_ONE
+      ∟ take.conf
+      ∟ frames
+        ∟ preview
+          ∟ high_res
+            ∟ 0001_0001_0001_000001.jpg
+            ∟ ...
+            ∟ 0001_0001_0001_000001.jpg
+          ∟ low_res
+            ∟ 0001_0001_0001_000001.jpg
+            ∟ ...
+            ∟ 0001_0001_0001_000001.jpg
+        ∟ RAW
+          ∟ 0001_0001_0001_000001.cr3
+          ∟ ...
+          ∟ 0001_0001_0001_000001.cr3
+
+
 ## UI
 
 The UI of this program is flat and professional. The only supported theme is black. Color accents should be the color of a brick, dark red.
