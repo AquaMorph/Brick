@@ -16,8 +16,10 @@ namespace {
 
 constexpr int kProjectFormatVersion = 1;
 constexpr int kSceneFormatVersion = 1;
+constexpr int kShotFormatVersion = 1;
 constexpr auto kConfigFileName = "project.conf";
 constexpr auto kSceneConfigFileName = "scene.conf";
+constexpr auto kShotConfigFileName = "shot.conf";
 
 bool isValidProjectName(const QString& name) {
   static const QRegularExpression validName(R"(^[A-Za-z0-9]+(?: +[A-Za-z0-9]+)*$)");
@@ -34,69 +36,80 @@ QString directoryNameForScene(int index, QString name) {
       .arg(name.replace(' ', '_').toUpper());
 }
 
+QString directoryNameForShot(int index, QString name) {
+  return QString("%1_%2")
+      .arg(index + 1, 4, 10, QLatin1Char('0'))
+      .arg(name.replace(' ', '_').toUpper());
+}
+
 void setError(QString* error, const QString& message) {
   if (error != nullptr) {
     *error = message;
   }
 }
 
-struct SceneDirectory {
+struct ContentDirectory {
   QString oldName;
-  QString sceneName;
+  QString contentName;
 };
 
-bool renameSceneDirectories(const QString& projectDirectory,
-                            const std::vector<SceneDirectory>& scenes,
-                            QString* error) {
-  QDir project(projectDirectory);
+bool renameContentDirectories(
+    const QString& parentDirectory,
+    const std::vector<ContentDirectory>& contents, const QString& contentType,
+    QString (*directoryName)(int, QString), QString* error) {
+  QDir parent(parentDirectory);
   const QString token = QUuid::createUuid().toString(QUuid::Id128);
   std::vector<QString> temporaryNames;
-  temporaryNames.reserve(scenes.size());
+  temporaryNames.reserve(contents.size());
 
-  for (std::size_t index = 0; index < scenes.size(); ++index) {
-    const QString temporaryName = ".brick-scene-" + token + '-' +
+  for (std::size_t index = 0; index < contents.size(); ++index) {
+    const QString temporaryName = ".brick-" + contentType + '-' + token + '-' +
                                   QString::number(index);
     temporaryNames.push_back(temporaryName);
-    if (!project.rename(scenes[index].oldName, temporaryName)) {
+    if (!parent.rename(contents[index].oldName, temporaryName)) {
       for (std::size_t rollback = 0; rollback < index; ++rollback) {
-        project.rename(temporaryNames[rollback], scenes[rollback].oldName);
+        parent.rename(temporaryNames[rollback], contents[rollback].oldName);
       }
-      setError(error, "Brick could not renumber the scene folders.");
+      setError(error,
+               QString("Brick could not renumber the %1 folders.").arg(contentType));
       return false;
     }
   }
 
   std::size_t renamed = 0;
-  for (; renamed < scenes.size(); ++renamed) {
-    const QString newName =
-        directoryNameForScene(static_cast<int>(renamed), scenes[renamed].sceneName);
-    if (!project.rename(temporaryNames[renamed], newName)) {
+  for (; renamed < contents.size(); ++renamed) {
+    const QString newName = directoryName(
+        static_cast<int>(renamed), contents[renamed].contentName);
+    if (!parent.rename(temporaryNames[renamed], newName)) {
       break;
     }
   }
-  if (renamed == scenes.size()) {
+  if (renamed == contents.size()) {
     return true;
   }
 
   for (std::size_t index = 0; index < renamed; ++index) {
-    project.rename(directoryNameForScene(static_cast<int>(index),
-                                         scenes[index].sceneName),
-                   temporaryNames[index]);
+    parent.rename(directoryName(static_cast<int>(index),
+                                contents[index].contentName),
+                  temporaryNames[index]);
   }
-  for (std::size_t index = 0; index < scenes.size(); ++index) {
-    project.rename(temporaryNames[index], scenes[index].oldName);
+  for (std::size_t index = 0; index < contents.size(); ++index) {
+    parent.rename(temporaryNames[index], contents[index].oldName);
   }
-  setError(error, "Brick could not renumber the scene folders.");
+  setError(error,
+           QString("Brick could not renumber the %1 folders.").arg(contentType));
   return false;
 }
 
 }  // namespace
 
 
-Project::Project(QString name, QString directory, std::vector<QString> scenes)
+Project::Project(QString name, QString directory, std::vector<QString> scenes,
+                 std::vector<std::vector<QString>> shots)
     : name_(std::move(name)),
       directory_(std::move(directory)),
-      scenes_(std::move(scenes)) {}
+      scenes_(std::move(scenes)),
+      shots_(std::move(shots)) {}
 
 
 std::optional<Project> Project::create(const QString& parentDirectory,
@@ -189,7 +202,9 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
       {"[0-9][0-9][0-9][0-9]_*"}, QDir::Dirs | QDir::NoDotAndDotDot,
       QDir::Name);
   std::vector<QString> scenes;
+  std::vector<std::vector<QString>> shots;
   scenes.reserve(sceneDirectories.size());
+  shots.reserve(sceneDirectories.size());
   for (int index = 0; index < sceneDirectories.size(); ++index) {
     const QString& sceneDirectory = sceneDirectories[index];
     if (!sceneDirectory.startsWith(
@@ -213,9 +228,41 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
       return std::nullopt;
     }
     scenes.push_back(sceneName);
+
+    QDir scene(project.filePath(sceneDirectory));
+    const QStringList shotDirectories = scene.entryList(
+        {"[0-9][0-9][0-9][0-9]_*"}, QDir::Dirs | QDir::NoDotAndDotDot,
+        QDir::Name);
+    std::vector<QString> sceneShots;
+    sceneShots.reserve(shotDirectories.size());
+    for (int shotIndex = 0; shotIndex < shotDirectories.size(); ++shotIndex) {
+      const QString& shotDirectory = shotDirectories[shotIndex];
+      if (!shotDirectory.startsWith(
+              QString("%1_").arg(shotIndex + 1, 4, 10, QLatin1Char('0')))) {
+        setError(error, "A scene contains incorrectly numbered shots.");
+        return std::nullopt;
+      }
+
+      QSettings shotConfig(
+          scene.filePath(shotDirectory + '/' + kShotConfigFileName),
+          QSettings::IniFormat);
+      shotConfig.beginGroup("Shot");
+      const QString shotName = shotConfig.value("name").toString();
+      const int shotFormatVersion = shotConfig.value("formatVersion").toInt();
+      shotConfig.endGroup();
+      if (shotConfig.status() != QSettings::NoError ||
+          !isValidProjectName(shotName) ||
+          shotFormatVersion != kShotFormatVersion ||
+          shotDirectory != directoryNameForShot(shotIndex, shotName)) {
+        setError(error, "A scene contains an invalid shot.");
+        return std::nullopt;
+      }
+      sceneShots.push_back(shotName);
+    }
+    shots.push_back(std::move(sceneShots));
   }
 
-  return Project(name, projectDirectory, std::move(scenes));
+  return Project(name, projectDirectory, std::move(scenes), std::move(shots));
 }
 
 
@@ -226,6 +273,11 @@ const QString& Project::directory() const { return directory_; }
 
 
 const std::vector<QString>& Project::scenes() const { return scenes_; }
+
+
+const std::vector<QString>& Project::shots(int sceneIndex) const {
+  return shots_.at(sceneIndex);
+}
 
 
 bool Project::createScene(const QString& name, QString* error) {
@@ -267,6 +319,7 @@ bool Project::createScene(const QString& name, QString* error) {
   }
 
   scenes_.push_back(name);
+  shots_.emplace_back();
   return true;
 }
 
@@ -342,7 +395,7 @@ bool Project::deleteScene(int index, QString* error) {
     return false;
   }
 
-  std::vector<SceneDirectory> remaining;
+  std::vector<ContentDirectory> remaining;
   remaining.reserve(scenes_.size() - 1);
   for (int oldIndex = 0; oldIndex < static_cast<int>(scenes_.size()); ++oldIndex) {
     if (oldIndex != index) {
@@ -350,12 +403,14 @@ bool Project::deleteScene(int index, QString* error) {
           {directoryNameForScene(oldIndex, scenes_[oldIndex]), scenes_[oldIndex]});
     }
   }
-  if (!renameSceneDirectories(directory_, remaining, error)) {
+  if (!renameContentDirectories(directory_, remaining, "scene",
+                                directoryNameForScene, error)) {
     project.rename(tombstone, deletedDirectory);
     return false;
   }
 
   scenes_.erase(scenes_.begin() + index);
+  shots_.erase(shots_.begin() + index);
   QDir(project.filePath(tombstone)).removeRecursively();
   return true;
 }
@@ -371,21 +426,217 @@ bool Project::moveScene(int from, int to, QString* error) {
     return true;
   }
 
-  std::vector<SceneDirectory> reordered;
+  std::vector<ContentDirectory> reordered;
   reordered.reserve(scenes_.size());
   for (int index = 0; index < sceneCount; ++index) {
     reordered.push_back(
         {directoryNameForScene(index, scenes_[index]), scenes_[index]});
   }
-  const SceneDirectory moved = reordered[from];
+  const ContentDirectory moved = reordered[from];
   reordered.erase(reordered.begin() + from);
   reordered.insert(reordered.begin() + to, moved);
-  if (!renameSceneDirectories(directory_, reordered, error)) {
+  if (!renameContentDirectories(directory_, reordered, "scene",
+                                directoryNameForScene, error)) {
     return false;
   }
 
   const QString movedName = scenes_[from];
   scenes_.erase(scenes_.begin() + from);
   scenes_.insert(scenes_.begin() + to, movedName);
+  auto movedShots = std::move(shots_[from]);
+  shots_.erase(shots_.begin() + from);
+  shots_.insert(shots_.begin() + to, std::move(movedShots));
+  return true;
+}
+
+
+bool Project::createShot(int sceneIndex, const QString& name, QString* error) {
+  if (sceneIndex < 0 || sceneIndex >= static_cast<int>(scenes_.size())) {
+    setError(error, "The selected scene does not exist.");
+    return false;
+  }
+  if (!isValidProjectName(name)) {
+    setError(error, "Shot names may contain only letters, numbers, and spaces.");
+    return false;
+  }
+
+  auto& sceneShots = shots_[sceneIndex];
+  if (std::find(sceneShots.begin(), sceneShots.end(), name) !=
+      sceneShots.end()) {
+    setError(error, "A shot with that name already exists in this scene.");
+    return false;
+  }
+  if (sceneShots.size() >= 9999) {
+    setError(error, "A scene cannot contain more than 9999 shots.");
+    return false;
+  }
+
+  QDir scene(QDir(directory_).filePath(
+      directoryNameForScene(sceneIndex, scenes_[sceneIndex])));
+  const QString shotDirectory =
+      directoryNameForShot(static_cast<int>(sceneShots.size()), name);
+  if (!scene.mkdir(shotDirectory)) {
+    setError(error, "Brick could not create the shot folder.");
+    return false;
+  }
+
+  const QString configPath =
+      scene.filePath(shotDirectory + '/' + kShotConfigFileName);
+  QSettings config(configPath, QSettings::IniFormat);
+  config.beginGroup("Shot");
+  config.setValue("name", name);
+  config.setValue("formatVersion", kShotFormatVersion);
+  config.setValue("createdUtc",
+                  QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+  config.endGroup();
+  config.sync();
+  if (config.status() != QSettings::NoError) {
+    QDir(scene.filePath(shotDirectory)).removeRecursively();
+    setError(error, "Brick could not write shot.conf.");
+    return false;
+  }
+
+  sceneShots.push_back(name);
+  return true;
+}
+
+
+bool Project::renameShot(int sceneIndex, int shotIndex, const QString& name,
+                         QString* error) {
+  if (sceneIndex < 0 || sceneIndex >= static_cast<int>(scenes_.size()) ||
+      shotIndex < 0 || shotIndex >= static_cast<int>(shots_[sceneIndex].size())) {
+    setError(error, "The selected shot does not exist.");
+    return false;
+  }
+  if (!isValidProjectName(name)) {
+    setError(error, "Shot names may contain only letters, numbers, and spaces.");
+    return false;
+  }
+
+  auto& sceneShots = shots_[sceneIndex];
+  const auto duplicate = std::find(sceneShots.begin(), sceneShots.end(), name);
+  if (duplicate != sceneShots.end() &&
+      duplicate != sceneShots.begin() + shotIndex) {
+    setError(error, "A shot with that name already exists in this scene.");
+    return false;
+  }
+
+  const QString oldName = sceneShots[shotIndex];
+  if (name == oldName) {
+    return true;
+  }
+
+  QDir scene(QDir(directory_).filePath(
+      directoryNameForScene(sceneIndex, scenes_[sceneIndex])));
+  const QString oldDirectory = directoryNameForShot(shotIndex, oldName);
+  const QString newDirectory = directoryNameForShot(shotIndex, name);
+  const bool directoryChanged = oldDirectory != newDirectory;
+  if (directoryChanged && !scene.rename(oldDirectory, newDirectory)) {
+    setError(error, "Brick could not rename the shot folder.");
+    return false;
+  }
+
+  bool configWritten = false;
+  {
+    QSettings config(scene.filePath(newDirectory + '/' + kShotConfigFileName),
+                     QSettings::IniFormat);
+    config.setValue("Shot/name", name);
+    config.sync();
+    configWritten = config.status() == QSettings::NoError;
+    if (!configWritten) {
+      config.setValue("Shot/name", oldName);
+      config.sync();
+    }
+  }
+  if (!configWritten) {
+    const bool directoryRestored =
+        !directoryChanged || scene.rename(newDirectory, oldDirectory);
+    setError(error, directoryRestored
+                        ? "Brick could not update shot.conf."
+                        : "Brick could not update shot.conf or restore the shot folder.");
+    return false;
+  }
+
+  sceneShots[shotIndex] = name;
+  return true;
+}
+
+
+bool Project::deleteShot(int sceneIndex, int shotIndex, QString* error) {
+  if (sceneIndex < 0 || sceneIndex >= static_cast<int>(scenes_.size()) ||
+      shotIndex < 0 || shotIndex >= static_cast<int>(shots_[sceneIndex].size())) {
+    setError(error, "The selected shot does not exist.");
+    return false;
+  }
+
+  auto& sceneShots = shots_[sceneIndex];
+  QDir scene(QDir(directory_).filePath(
+      directoryNameForScene(sceneIndex, scenes_[sceneIndex])));
+  const QString deletedDirectory =
+      directoryNameForShot(shotIndex, sceneShots[shotIndex]);
+  const QString tombstone =
+      ".brick-shot-delete-" + QUuid::createUuid().toString(QUuid::Id128);
+  if (!scene.rename(deletedDirectory, tombstone)) {
+    setError(error, "Brick could not prepare the shot folder for deletion.");
+    return false;
+  }
+
+  std::vector<ContentDirectory> remaining;
+  remaining.reserve(sceneShots.size() - 1);
+  for (int oldIndex = 0; oldIndex < static_cast<int>(sceneShots.size());
+       ++oldIndex) {
+    if (oldIndex != shotIndex) {
+      remaining.push_back({directoryNameForShot(oldIndex, sceneShots[oldIndex]),
+                           sceneShots[oldIndex]});
+    }
+  }
+  if (!renameContentDirectories(scene.absolutePath(), remaining, "shot",
+                                directoryNameForShot, error)) {
+    scene.rename(tombstone, deletedDirectory);
+    return false;
+  }
+
+  sceneShots.erase(sceneShots.begin() + shotIndex);
+  QDir(scene.filePath(tombstone)).removeRecursively();
+  return true;
+}
+
+
+bool Project::moveShot(int sceneIndex, int from, int to, QString* error) {
+  if (sceneIndex < 0 || sceneIndex >= static_cast<int>(scenes_.size())) {
+    setError(error, "The selected scene does not exist.");
+    return false;
+  }
+
+  auto& sceneShots = shots_[sceneIndex];
+  const int shotCount = static_cast<int>(sceneShots.size());
+  if (from < 0 || from >= shotCount || to < 0 || to >= shotCount) {
+    setError(error, "The selected shot cannot be moved there.");
+    return false;
+  }
+  if (from == to) {
+    return true;
+  }
+
+  std::vector<ContentDirectory> reordered;
+  reordered.reserve(sceneShots.size());
+  for (int index = 0; index < shotCount; ++index) {
+    reordered.push_back(
+        {directoryNameForShot(index, sceneShots[index]), sceneShots[index]});
+  }
+  const ContentDirectory moved = reordered[from];
+  reordered.erase(reordered.begin() + from);
+  reordered.insert(reordered.begin() + to, moved);
+
+  const QString scenePath = QDir(directory_).filePath(
+      directoryNameForScene(sceneIndex, scenes_[sceneIndex]));
+  if (!renameContentDirectories(scenePath, reordered, "shot",
+                                directoryNameForShot, error)) {
+    return false;
+  }
+
+  const QString movedName = sceneShots[from];
+  sceneShots.erase(sceneShots.begin() + from);
+  sceneShots.insert(sceneShots.begin() + to, movedName);
   return true;
 }

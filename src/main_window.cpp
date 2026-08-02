@@ -54,21 +54,24 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   tabs->setDocumentMode(true);
 
   auto* producerTab = new QWidget(tabs);
-  auto* producerLayout = new QVBoxLayout(producerTab);
+  auto* producerLayout = new QHBoxLayout(producerTab);
   producerLayout->setContentsMargins(24, 24, 24, 24);
-  producerLayout->setSpacing(12);
+  producerLayout->setSpacing(24);
 
-  auto* heading = new QLabel("Scenes", producerTab);
-  QFont headingFont = heading->font();
+  auto* scenePanel = new QVBoxLayout;
+  scenePanel->setSpacing(12);
+
+  auto* sceneHeading = new QLabel("Scenes", producerTab);
+  QFont headingFont = sceneHeading->font();
   headingFont.setPointSize(18);
   headingFont.setBold(true);
-  heading->setFont(headingFont);
-  producerLayout->addWidget(heading);
+  sceneHeading->setFont(headingFont);
+  scenePanel->addWidget(sceneHeading);
 
   sceneList_ = new QListWidget(producerTab);
   sceneList_->setObjectName("sceneList");
   sceneList_->setAlternatingRowColors(true);
-  producerLayout->addWidget(sceneList_, 1);
+  scenePanel->addWidget(sceneList_, 1);
 
   auto* sceneActions = new QHBoxLayout;
   newSceneButton_ = new QPushButton("New Scene...", producerTab);
@@ -87,7 +90,40 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   sceneActions->addStretch();
   sceneActions->addWidget(moveSceneUpButton_);
   sceneActions->addWidget(moveSceneDownButton_);
-  producerLayout->addLayout(sceneActions);
+  scenePanel->addLayout(sceneActions);
+  producerLayout->addLayout(scenePanel, 1);
+
+  auto* shotPanel = new QVBoxLayout;
+  shotPanel->setSpacing(12);
+
+  auto* shotHeading = new QLabel("Shots", producerTab);
+  shotHeading->setFont(headingFont);
+  shotPanel->addWidget(shotHeading);
+
+  shotList_ = new QListWidget(producerTab);
+  shotList_->setObjectName("shotList");
+  shotList_->setAlternatingRowColors(true);
+  shotPanel->addWidget(shotList_, 1);
+
+  auto* shotActions = new QHBoxLayout;
+  newShotButton_ = new QPushButton("New Shot...", producerTab);
+  newShotButton_->setObjectName("newShotButton");
+  renameShotButton_ = new QPushButton("Rename...", producerTab);
+  renameShotButton_->setObjectName("renameShotButton");
+  deleteShotButton_ = new QPushButton("Delete", producerTab);
+  deleteShotButton_->setObjectName("deleteShotButton");
+  moveShotUpButton_ = new QPushButton("Move Up", producerTab);
+  moveShotUpButton_->setObjectName("moveShotUpButton");
+  moveShotDownButton_ = new QPushButton("Move Down", producerTab);
+  moveShotDownButton_->setObjectName("moveShotDownButton");
+  shotActions->addWidget(newShotButton_);
+  shotActions->addWidget(renameShotButton_);
+  shotActions->addWidget(deleteShotButton_);
+  shotActions->addStretch();
+  shotActions->addWidget(moveShotUpButton_);
+  shotActions->addWidget(moveShotDownButton_);
+  shotPanel->addLayout(shotActions);
+  producerLayout->addLayout(shotPanel, 1);
 
   connect(newSceneButton_, &QPushButton::clicked, this,
           [this] { createScene(); });
@@ -100,7 +136,22 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   connect(moveSceneDownButton_, &QPushButton::clicked, this,
           [this] { moveScene(1); });
   connect(sceneList_, &QListWidget::currentRowChanged, this,
-          [this] { updateSceneActions(); });
+          [this] {
+            updateSceneActions();
+            refreshShots();
+          });
+  connect(newShotButton_, &QPushButton::clicked, this,
+          [this] { createShot(); });
+  connect(renameShotButton_, &QPushButton::clicked, this,
+          [this] { renameShot(); });
+  connect(deleteShotButton_, &QPushButton::clicked, this,
+          [this] { deleteShot(); });
+  connect(moveShotUpButton_, &QPushButton::clicked, this,
+          [this] { moveShot(-1); });
+  connect(moveShotDownButton_, &QPushButton::clicked, this,
+          [this] { moveShot(1); });
+  connect(shotList_, &QListWidget::currentRowChanged, this,
+          [this] { updateShotActions(); });
 
   tabs->addTab(producerTab, "Producer");
   tabs->addTab(new QWidget(tabs), "Cinematography");
@@ -108,6 +159,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   setCentralWidget(tabs);
 
   updateSceneActions();
+  updateShotActions();
   statusBar()->showMessage("No project open");
 
   const QString lastProjectDirectory =
@@ -285,6 +337,130 @@ void MainWindow::updateSceneActions() {
   deleteSceneButton_->setEnabled(hasProject && row >= 0);
   moveSceneUpButton_->setEnabled(hasProject && row > 0);
   moveSceneDownButton_->setEnabled(hasProject && row >= 0 && row + 1 < count);
+}
+
+
+void MainWindow::createShot() {
+  const int sceneRow = sceneList_->currentRow();
+  if (!project_.has_value() || sceneRow < 0) {
+    return;
+  }
+
+  bool accepted = false;
+  const QString name = QInputDialog::getText(
+      this, "New Shot", "Shot name:", QLineEdit::Normal, QString(), &accepted);
+  if (!accepted) {
+    return;
+  }
+
+  QString error;
+  if (!project_->createShot(sceneRow, name, &error)) {
+    QMessageBox::critical(this, "Could Not Create Shot", error);
+    return;
+  }
+  refreshShots(static_cast<int>(project_->shots(sceneRow).size()) - 1);
+}
+
+
+void MainWindow::renameShot() {
+  const int sceneRow = sceneList_->currentRow();
+  const int shotRow = shotList_->currentRow();
+  if (!project_.has_value() || sceneRow < 0 || shotRow < 0) {
+    return;
+  }
+
+  bool accepted = false;
+  const QString name = QInputDialog::getText(
+      this, "Rename Shot", "Shot name:", QLineEdit::Normal,
+      project_->shots(sceneRow)[shotRow], &accepted);
+  if (!accepted) {
+    return;
+  }
+
+  QString error;
+  if (!project_->renameShot(sceneRow, shotRow, name, &error)) {
+    QMessageBox::critical(this, "Could Not Rename Shot", error);
+    return;
+  }
+  refreshShots(shotRow);
+}
+
+
+void MainWindow::deleteShot() {
+  const int sceneRow = sceneList_->currentRow();
+  const int shotRow = shotList_->currentRow();
+  if (!project_.has_value() || sceneRow < 0 || shotRow < 0) {
+    return;
+  }
+
+  const QString& name = project_->shots(sceneRow)[shotRow];
+  QMessageBox confirmation(
+      QMessageBox::Warning, "Delete Shot",
+      QString("Delete shot \"%1\" and all of its contents? This cannot be "
+              "undone.")
+          .arg(name),
+      QMessageBox::Cancel, this);
+  auto* deleteButton = confirmation.addButton(
+      "Delete", QMessageBox::DestructiveRole);
+  confirmation.exec();
+  if (confirmation.clickedButton() != deleteButton) {
+    return;
+  }
+
+  QString error;
+  if (!project_->deleteShot(sceneRow, shotRow, &error)) {
+    QMessageBox::critical(this, "Could Not Delete Shot", error);
+    return;
+  }
+  refreshShots(std::min(
+      shotRow, static_cast<int>(project_->shots(sceneRow).size()) - 1));
+}
+
+
+void MainWindow::moveShot(int offset) {
+  const int sceneRow = sceneList_->currentRow();
+  const int from = shotList_->currentRow();
+  const int to = from + offset;
+  if (!project_.has_value() || sceneRow < 0 || from < 0) {
+    return;
+  }
+
+  QString error;
+  if (!project_->moveShot(sceneRow, from, to, &error)) {
+    QMessageBox::critical(this, "Could Not Move Shot", error);
+    return;
+  }
+  refreshShots(to);
+}
+
+
+void MainWindow::refreshShots(int selectedRow) {
+  shotList_->clear();
+  const int sceneRow = sceneList_->currentRow();
+  if (project_.has_value() && sceneRow >= 0) {
+    const auto& shots = project_->shots(sceneRow);
+    for (int index = 0; index < static_cast<int>(shots.size()); ++index) {
+      shotList_->addItem(
+          QString("%1  %2").arg(index + 1, 4, 10, QLatin1Char('0')).arg(
+              shots[index]));
+    }
+    if (selectedRow >= 0 && selectedRow < shotList_->count()) {
+      shotList_->setCurrentRow(selectedRow);
+    }
+  }
+  updateShotActions();
+}
+
+
+void MainWindow::updateShotActions() {
+  const bool hasScene = project_.has_value() && sceneList_->currentRow() >= 0;
+  const int row = shotList_->currentRow();
+  const int count = shotList_->count();
+  newShotButton_->setEnabled(hasScene);
+  renameShotButton_->setEnabled(hasScene && row >= 0);
+  deleteShotButton_->setEnabled(hasScene && row >= 0);
+  moveShotUpButton_->setEnabled(hasScene && row > 0);
+  moveShotDownButton_->setEnabled(hasScene && row >= 0 && row + 1 < count);
 }
 
 
