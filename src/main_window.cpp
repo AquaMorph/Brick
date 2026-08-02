@@ -14,6 +14,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSettings>
 #include <QStatusBar>
 #include <QTabWidget>
 #include <QVBoxLayout>
@@ -21,6 +22,13 @@
 
 #include <algorithm>
 #include <utility>
+
+namespace {
+
+constexpr auto kLastProjectKey = "Projects/lastOpenedDirectory";
+
+}  // namespace
+
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   setWindowTitle(QApplication::applicationDisplayName());
@@ -96,6 +104,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
   updateSceneActions();
   statusBar()->showMessage("No project open");
+
+  const QString lastProjectDirectory =
+      QSettings().value(kLastProjectKey).toString();
+  if (!lastProjectDirectory.isEmpty()) {
+    QString error;
+    auto project = Project::open(lastProjectDirectory, &error);
+    if (project.has_value()) {
+      setProject(std::move(*project));
+    } else {
+      statusBar()->showMessage("Could not reopen last project: " + error);
+    }
+  }
 }
 
 
@@ -241,6 +261,7 @@ void MainWindow::updateSceneActions() {
 
 void MainWindow::setProject(Project project) {
   project_ = std::move(project);
+  QSettings().setValue(kLastProjectKey, project_->directory());
   setWindowTitle(project_->name() + " - " +
                   QApplication::applicationDisplayName());
   statusBar()->showMessage(project_->directory());
