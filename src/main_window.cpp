@@ -53,36 +53,36 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   auto* tabs = new QTabWidget(this);
   tabs->setDocumentMode(true);
 
-  auto* producerTab = new QWidget(tabs);
-  auto* producerLayout = new QHBoxLayout(producerTab);
-  producerLayout->setContentsMargins(24, 24, 24, 24);
-  producerLayout->setSpacing(24);
+  auto* directTab = new QWidget(tabs);
+  auto* directLayout = new QHBoxLayout(directTab);
+  directLayout->setContentsMargins(24, 24, 24, 24);
+  directLayout->setSpacing(24);
 
   auto* scenePanel = new QVBoxLayout;
   scenePanel->setSpacing(12);
 
-  auto* sceneHeading = new QLabel("Scenes", producerTab);
+  auto* sceneHeading = new QLabel("Scenes", directTab);
   QFont headingFont = sceneHeading->font();
   headingFont.setPointSize(18);
   headingFont.setBold(true);
   sceneHeading->setFont(headingFont);
   scenePanel->addWidget(sceneHeading);
 
-  sceneList_ = new QListWidget(producerTab);
+  sceneList_ = new QListWidget(directTab);
   sceneList_->setObjectName("sceneList");
   sceneList_->setAlternatingRowColors(true);
   scenePanel->addWidget(sceneList_, 1);
 
   auto* sceneActions = new QHBoxLayout;
-  newSceneButton_ = new QPushButton("New Scene...", producerTab);
+  newSceneButton_ = new QPushButton("New Scene...", directTab);
   newSceneButton_->setObjectName("newSceneButton");
-  renameSceneButton_ = new QPushButton("Rename...", producerTab);
+  renameSceneButton_ = new QPushButton("Rename...", directTab);
   renameSceneButton_->setObjectName("renameSceneButton");
-  deleteSceneButton_ = new QPushButton("Delete", producerTab);
+  deleteSceneButton_ = new QPushButton("Delete", directTab);
   deleteSceneButton_->setObjectName("deleteSceneButton");
-  moveSceneUpButton_ = new QPushButton("Move Up", producerTab);
+  moveSceneUpButton_ = new QPushButton("Move Up", directTab);
   moveSceneUpButton_->setObjectName("moveSceneUpButton");
-  moveSceneDownButton_ = new QPushButton("Move Down", producerTab);
+  moveSceneDownButton_ = new QPushButton("Move Down", directTab);
   moveSceneDownButton_->setObjectName("moveSceneDownButton");
   sceneActions->addWidget(newSceneButton_);
   sceneActions->addWidget(renameSceneButton_);
@@ -91,30 +91,30 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   sceneActions->addWidget(moveSceneUpButton_);
   sceneActions->addWidget(moveSceneDownButton_);
   scenePanel->addLayout(sceneActions);
-  producerLayout->addLayout(scenePanel, 1);
+  directLayout->addLayout(scenePanel, 1);
 
   auto* shotPanel = new QVBoxLayout;
   shotPanel->setSpacing(12);
 
-  auto* shotHeading = new QLabel("Shots", producerTab);
+  auto* shotHeading = new QLabel("Shots", directTab);
   shotHeading->setFont(headingFont);
   shotPanel->addWidget(shotHeading);
 
-  shotList_ = new QListWidget(producerTab);
+  shotList_ = new QListWidget(directTab);
   shotList_->setObjectName("shotList");
   shotList_->setAlternatingRowColors(true);
   shotPanel->addWidget(shotList_, 1);
 
   auto* shotActions = new QHBoxLayout;
-  newShotButton_ = new QPushButton("New Shot...", producerTab);
+  newShotButton_ = new QPushButton("New Shot...", directTab);
   newShotButton_->setObjectName("newShotButton");
-  renameShotButton_ = new QPushButton("Rename...", producerTab);
+  renameShotButton_ = new QPushButton("Rename...", directTab);
   renameShotButton_->setObjectName("renameShotButton");
-  deleteShotButton_ = new QPushButton("Delete", producerTab);
+  deleteShotButton_ = new QPushButton("Delete", directTab);
   deleteShotButton_->setObjectName("deleteShotButton");
-  moveShotUpButton_ = new QPushButton("Move Up", producerTab);
+  moveShotUpButton_ = new QPushButton("Move Up", directTab);
   moveShotUpButton_->setObjectName("moveShotUpButton");
-  moveShotDownButton_ = new QPushButton("Move Down", producerTab);
+  moveShotDownButton_ = new QPushButton("Move Down", directTab);
   moveShotDownButton_->setObjectName("moveShotDownButton");
   shotActions->addWidget(newShotButton_);
   shotActions->addWidget(renameShotButton_);
@@ -123,7 +123,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   shotActions->addWidget(moveShotUpButton_);
   shotActions->addWidget(moveShotDownButton_);
   shotPanel->addLayout(shotActions);
-  producerLayout->addLayout(shotPanel, 1);
+  directLayout->addLayout(shotPanel, 1);
 
   connect(newSceneButton_, &QPushButton::clicked, this,
           [this] { createScene(); });
@@ -153,7 +153,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   connect(shotList_, &QListWidget::currentRowChanged, this,
           [this] { updateShotActions(); });
 
-  tabs->addTab(producerTab, "Producer");
+  tabs->addTab(directTab, "Direct");
   tabs->addTab(new QWidget(tabs), "Cinematography");
   tabs->addTab(new QWidget(tabs), "Animation");
   setCentralWidget(tabs);

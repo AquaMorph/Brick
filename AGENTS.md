@@ -62,7 +62,7 @@ The UI of this program is flat and professional. The only supported theme is bla
 
 The entire UI of the program is based on tabbed work modes. 
 
-The first tab is the Producer tab. This tab is used to break apart of the film into scenes and manage what take is actively being worked on.
+The first tab is the Direct tab. This tab is used to break apart of the film into scenes and manage what take is actively being worked on.
 
 The second tab is Cinematography which is for adjusting camera settings and taking test photos to play with lighting and camera settings.
 
