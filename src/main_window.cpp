@@ -18,7 +18,6 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QSettings>
-#include <QStatusBar>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -79,9 +78,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   tabs->setDocumentMode(true);
 
   auto* directTab = new QWidget(tabs);
-  auto* directLayout = new QHBoxLayout(directTab);
+  auto* directLayout = new QVBoxLayout(directTab);
   directLayout->setContentsMargins(24, 24, 24, 24);
-  directLayout->setSpacing(24);
+  directLayout->setSpacing(18);
+
+  filmTitleLabel_ = new QLabel("No film open", directTab);
+  QFont filmTitleFont = filmTitleLabel_->font();
+  filmTitleFont.setPointSize(24);
+  filmTitleFont.setBold(true);
+  filmTitleLabel_->setFont(filmTitleFont);
+  directLayout->addWidget(filmTitleLabel_);
+
+  auto* filmLayout = new QHBoxLayout;
+  filmLayout->setSpacing(24);
 
   auto* scenePanel = new QVBoxLayout;
   scenePanel->setSpacing(12);
@@ -116,7 +125,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   sceneActions->addWidget(moveSceneUpButton_);
   sceneActions->addWidget(moveSceneDownButton_);
   scenePanel->addLayout(sceneActions);
-  directLayout->addLayout(scenePanel, 1);
+  filmLayout->addLayout(scenePanel, 1);
 
   auto* shotPanel = new QVBoxLayout;
   shotPanel->setSpacing(12);
@@ -148,7 +157,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   shotActions->addWidget(moveShotUpButton_);
   shotActions->addWidget(moveShotDownButton_);
   shotPanel->addLayout(shotActions);
-  directLayout->addLayout(shotPanel, 1);
+  filmLayout->addLayout(shotPanel, 1);
 
   auto* takePanel = new QVBoxLayout;
   takePanel->setSpacing(12);
@@ -175,7 +184,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   takeActions->addStretch();
   takeActions->addWidget(selectTakeButton_);
   takePanel->addLayout(takeActions);
-  directLayout->addLayout(takePanel, 1);
+  filmLayout->addLayout(takePanel, 1);
+  directLayout->addLayout(filmLayout, 1);
 
   connect(newSceneButton_, &QPushButton::clicked, this,
           [this] { createScene(); });
@@ -241,7 +251,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   updateSceneActions();
   updateShotActions();
   updateTakeActions();
-  statusBar()->showMessage("No project open");
 
   const QString lastProjectDirectory =
       QSettings().value(kLastProjectKey).toString();
@@ -251,7 +260,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     if (project.has_value()) {
       setProject(std::move(*project));
     } else {
-      statusBar()->showMessage("Could not reopen last project: " + error);
+      QMessageBox::warning(this, "Could Not Reopen Project", error);
     }
   }
 }
@@ -667,7 +676,7 @@ void MainWindow::setProject(Project project) {
   QSettings().setValue(kLastProjectKey, project_->directory());
   setWindowTitle(project_->name() + " - " +
                   QApplication::applicationDisplayName());
-  statusBar()->showMessage(project_->directory());
+  filmTitleLabel_->setText(project_->name());
   const int sceneRow = project_->activeTake().has_value()
                            ? project_->activeTake()->sceneIndex
                            : (project_->scenes().empty() ? -1 : 0);

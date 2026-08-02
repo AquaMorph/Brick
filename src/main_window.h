@@ -38,6 +38,7 @@ class MainWindow : public QMainWindow {
   void setProject(Project project);
 
   std::optional<Project> project_;
+  QLabel* filmTitleLabel_ = nullptr;
   QListWidget* sceneList_ = nullptr;
   QPushButton* newSceneButton_ = nullptr;
   QPushButton* renameSceneButton_ = nullptr;
