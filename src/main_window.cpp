@@ -73,6 +73,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   auto* sceneActions = new QHBoxLayout;
   newSceneButton_ = new QPushButton("New Scene...", producerTab);
   newSceneButton_->setObjectName("newSceneButton");
+  renameSceneButton_ = new QPushButton("Rename...", producerTab);
+  renameSceneButton_->setObjectName("renameSceneButton");
   deleteSceneButton_ = new QPushButton("Delete", producerTab);
   deleteSceneButton_->setObjectName("deleteSceneButton");
   moveSceneUpButton_ = new QPushButton("Move Up", producerTab);
@@ -80,6 +82,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   moveSceneDownButton_ = new QPushButton("Move Down", producerTab);
   moveSceneDownButton_->setObjectName("moveSceneDownButton");
   sceneActions->addWidget(newSceneButton_);
+  sceneActions->addWidget(renameSceneButton_);
   sceneActions->addWidget(deleteSceneButton_);
   sceneActions->addStretch();
   sceneActions->addWidget(moveSceneUpButton_);
@@ -88,6 +91,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
   connect(newSceneButton_, &QPushButton::clicked, this,
           [this] { createScene(); });
+  connect(renameSceneButton_, &QPushButton::clicked, this,
+          [this] { renameScene(); });
   connect(deleteSceneButton_, &QPushButton::clicked, this,
           [this] { deleteScene(); });
   connect(moveSceneUpButton_, &QPushButton::clicked, this,
@@ -187,6 +192,29 @@ void MainWindow::createScene() {
 }
 
 
+void MainWindow::renameScene() {
+  const int row = sceneList_->currentRow();
+  if (!project_.has_value() || row < 0) {
+    return;
+  }
+
+  bool accepted = false;
+  const QString name = QInputDialog::getText(
+      this, "Rename Scene", "Scene name:", QLineEdit::Normal,
+      project_->scenes()[row], &accepted);
+  if (!accepted) {
+    return;
+  }
+
+  QString error;
+  if (!project_->renameScene(row, name, &error)) {
+    QMessageBox::critical(this, "Could Not Rename Scene", error);
+    return;
+  }
+  refreshScenes(row);
+}
+
+
 void MainWindow::deleteScene() {
   const int row = sceneList_->currentRow();
   if (!project_.has_value() || row < 0) {
@@ -253,6 +281,7 @@ void MainWindow::updateSceneActions() {
   const int row = sceneList_->currentRow();
   const int count = sceneList_->count();
   newSceneButton_->setEnabled(hasProject);
+  renameSceneButton_->setEnabled(hasProject && row >= 0);
   deleteSceneButton_->setEnabled(hasProject && row >= 0);
   moveSceneUpButton_->setEnabled(hasProject && row > 0);
   moveSceneDownButton_->setEnabled(hasProject && row >= 0 && row + 1 < count);

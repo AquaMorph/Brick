@@ -271,6 +271,62 @@ bool Project::createScene(const QString& name, QString* error) {
 }
 
 
+bool Project::renameScene(int index, const QString& name, QString* error) {
+  if (index < 0 || index >= static_cast<int>(scenes_.size())) {
+    setError(error, "The selected scene does not exist.");
+    return false;
+  }
+  if (!isValidProjectName(name)) {
+    setError(error, "Scene names may contain only letters, numbers, and spaces.");
+    return false;
+  }
+  const auto duplicate = std::find(scenes_.begin(), scenes_.end(), name);
+  if (duplicate != scenes_.end() && duplicate != scenes_.begin() + index) {
+    setError(error, "A scene with that name already exists.");
+    return false;
+  }
+
+  const QString oldName = scenes_[index];
+  if (name == oldName) {
+    return true;
+  }
+
+  QDir project(directory_);
+  const QString oldDirectory = directoryNameForScene(index, oldName);
+  const QString newDirectory = directoryNameForScene(index, name);
+  const bool directoryChanged = oldDirectory != newDirectory;
+  if (directoryChanged && !project.rename(oldDirectory, newDirectory)) {
+    setError(error, "Brick could not rename the scene folder.");
+    return false;
+  }
+
+  bool configWritten = false;
+  {
+    QSettings config(
+        project.filePath(newDirectory + '/' + kSceneConfigFileName),
+        QSettings::IniFormat);
+    config.setValue("Scene/name", name);
+    config.sync();
+    configWritten = config.status() == QSettings::NoError;
+    if (!configWritten) {
+      config.setValue("Scene/name", oldName);
+      config.sync();
+    }
+  }
+  if (!configWritten) {
+    const bool directoryRestored =
+        !directoryChanged || project.rename(newDirectory, oldDirectory);
+    setError(error, directoryRestored
+                        ? "Brick could not update scene.conf."
+                        : "Brick could not update scene.conf or restore the scene folder.");
+    return false;
+  }
+
+  scenes_[index] = name;
+  return true;
+}
+
+
 bool Project::deleteScene(int index, QString* error) {
   if (index < 0 || index >= static_cast<int>(scenes_.size())) {
     setError(error, "The selected scene does not exist.");

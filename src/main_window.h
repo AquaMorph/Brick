@@ -17,6 +17,7 @@ class MainWindow : public QMainWindow {
   void createProject();
   void openProject();
   void createScene();
+  void renameScene();
   void deleteScene();
   void moveScene(int offset);
   void refreshScenes(int selectedRow = -1);
@@ -26,6 +27,7 @@ class MainWindow : public QMainWindow {
   std::optional<Project> project_;
   QListWidget* sceneList_ = nullptr;
   QPushButton* newSceneButton_ = nullptr;
+  QPushButton* renameSceneButton_ = nullptr;
   QPushButton* deleteSceneButton_ = nullptr;
   QPushButton* moveSceneUpButton_ = nullptr;
   QPushButton* moveSceneDownButton_ = nullptr;

@@ -71,26 +71,63 @@ int main(int argc, char* argv[]) {
 
   QFile marker(QDir(projectPath).filePath("0001_OPENING_SCENE/marker.txt"));
   passed &= expect(marker.open(QIODevice::WriteOnly),
-                   "Could not create scene content for the reorder test.");
+                    "Could not create scene content for the rename test.");
   marker.close();
+  passed &= expect(created->renameScene(0, "First Scene", &error),
+                    "A scene could not be renamed.");
+  passed &= expect(created->scenes()[0] == "First Scene",
+                    "Scene rename did not update the project.");
+  passed &= expect(
+      QFile::exists(QDir(projectPath).filePath("0001_FIRST_SCENE/marker.txt")),
+      "Scene rename did not preserve scene contents.");
+  passed &= expect(
+      !QFile::exists(QDir(projectPath).filePath("0001_OPENING_SCENE")),
+      "Scene rename left the old scene folder behind.");
+  {
+    QSettings renamedConfig(
+        QDir(projectPath).filePath("0001_FIRST_SCENE/scene.conf"),
+        QSettings::IniFormat);
+    passed &= expect(
+        renamedConfig.value("Scene/name").toString() == "First Scene",
+        "Scene rename did not update scene.conf.");
+    passed &= expect(
+        !renamedConfig.value("Scene/createdUtc").toString().isEmpty(),
+        "Scene rename removed the creation timestamp.");
+  }
+  passed &= expect(!created->renameScene(1, "First Scene", &error),
+                    "Scene rename should reject duplicate names.");
+  passed &= expect(!created->renameScene(0, "Bad/Scene", &error),
+                    "Scene rename should reject path separators.");
+  passed &= expect(!created->renameScene(-1, "Missing Scene", &error),
+                    "Scene rename should reject invalid indexes.");
+  passed &= expect(created->renameScene(0, "first scene", &error),
+                    "A case-only scene rename failed.");
+  passed &= expect(
+      QFile::exists(QDir(projectPath).filePath("0001_FIRST_SCENE/marker.txt")),
+      "A case-only scene rename moved or lost scene contents.");
+
+  opened = Project::open(projectPath, &error);
+  passed &= expect(opened.has_value() && opened->scenes()[0] == "first scene",
+                    "The renamed scene was not restored when reopening.");
+
   passed &= expect(created->moveScene(0, 1, &error),
-                   "Scenes could not be reordered.");
+                    "Scenes could not be reordered.");
   passed &= expect(created->scenes()[0] == "Closing Scene" &&
-                       created->scenes()[1] == "Opening Scene",
-                   "Scene reorder did not update the project order.");
+                        created->scenes()[1] == "first scene",
+                    "Scene reorder did not update the project order.");
   passed &= expect(
       QFile::exists(QDir(projectPath).filePath(
-          "0002_OPENING_SCENE/marker.txt")),
+          "0002_FIRST_SCENE/marker.txt")),
       "Scene reorder did not preserve scene contents.");
 
   passed &= expect(created->deleteScene(0, &error),
                    "A scene could not be deleted.");
   passed &= expect(created->scenes().size() == 1 &&
-                       created->scenes()[0] == "Opening Scene",
-                   "Scene deletion did not update the project.");
+                        created->scenes()[0] == "first scene",
+                    "Scene deletion did not update the project.");
   passed &= expect(
       QFile::exists(QDir(projectPath).filePath(
-          "0001_OPENING_SCENE/marker.txt")),
+          "0001_FIRST_SCENE/marker.txt")),
       "Scene deletion did not renumber the remaining scene.");
   passed &= expect(
       !QFile::exists(QDir(projectPath).filePath("0001_CLOSING_SCENE")),
@@ -98,8 +135,8 @@ int main(int argc, char* argv[]) {
 
   opened = Project::open(projectPath, &error);
   passed &= expect(opened.has_value() && opened->scenes().size() == 1 &&
-                       opened->scenes()[0] == "Opening Scene",
-                   "The scene order was not restored when reopening the project.");
+                        opened->scenes()[0] == "first scene",
+                    "The scene order was not restored when reopening the project.");
 
   passed &= expect(!Project::create(temporaryDirectory.path(), "Example Film",
                                     &error)

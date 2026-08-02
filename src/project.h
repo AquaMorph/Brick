@@ -16,6 +16,7 @@ class Project {
   [[nodiscard]] const std::vector<QString>& scenes() const;
 
   bool createScene(const QString& name, QString* error);
+  bool renameScene(int index, const QString& name, QString* error);
   bool deleteScene(int index, QString* error);
   bool moveScene(int from, int to, QString* error);
 
