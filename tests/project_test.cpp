@@ -116,6 +116,11 @@ int main(int argc, char* argv[]) {
       QFile::exists(QDir(projectPath).filePath(
           "0001_FIRST_SCENE/0001_WIDE_SHOT/shot.conf")),
       "Shot creation did not write shot.conf.");
+  passed &= expect(
+      QDir(QDir(projectPath).filePath(
+               "0001_FIRST_SCENE/0001_WIDE_SHOT"))
+          .exists("test_shots"),
+      "Shot creation did not create the test shots folder.");
   passed &= expect(created->takeCount(0, 0) == 1,
                    "Shot creation did not add its first take.");
   passed &= expect(

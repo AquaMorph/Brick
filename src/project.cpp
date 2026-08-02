@@ -565,6 +565,13 @@ bool Project::createShot(int sceneIndex, const QString& name, QString* error) {
     return false;
   }
 
+  QDir shot(scene.filePath(shotDirectory));
+  if (!shot.mkdir("test_shots")) {
+    shot.removeRecursively();
+    setError(error, "Brick could not create the test shots folder.");
+    return false;
+  }
+
   const QString configPath =
       scene.filePath(shotDirectory + '/' + kShotConfigFileName);
   QSettings config(configPath, QSettings::IniFormat);
@@ -581,8 +588,8 @@ bool Project::createShot(int sceneIndex, const QString& name, QString* error) {
     return false;
   }
 
-  if (!createTakeDirectory(QDir(scene.filePath(shotDirectory)), 0, error)) {
-    QDir(scene.filePath(shotDirectory)).removeRecursively();
+  if (!createTakeDirectory(shot, 0, error)) {
+    shot.removeRecursively();
     return false;
   }
 
