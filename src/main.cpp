@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QColor>
 #include <QPalette>
 
 #include "main_window.h"
@@ -14,7 +15,10 @@ int main(int argc, char* argv[]) {
   palette.setColor(QPalette::Window, Qt::black);
   palette.setColor(QPalette::WindowText, Qt::white);
   palette.setColor(QPalette::Base, Qt::black);
+  palette.setColor(QPalette::AlternateBase, QColor("#111111"));
   palette.setColor(QPalette::Text, Qt::white);
+  palette.setColor(QPalette::Highlight, QColor("#8f3028"));
+  palette.setColor(QPalette::HighlightedText, Qt::white);
   application.setPalette(palette);
 
   application.setStyleSheet(R"(
