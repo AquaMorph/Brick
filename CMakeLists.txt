@@ -19,6 +19,10 @@ qt_add_executable(brick
   WIN32
   MACOSX_BUNDLE
   src/main.cpp
+  src/main_window.cpp
+  src/main_window.h
+  src/project.cpp
+  src/project.h
 )
 
 target_link_libraries(brick PRIVATE Qt6::Widgets)
@@ -35,3 +39,16 @@ install(TARGETS brick
   BUNDLE DESTINATION .
   RUNTIME DESTINATION bin
 )
+
+include(CTest)
+
+if(BUILD_TESTING)
+  add_executable(project_tests
+    tests/project_test.cpp
+    src/project.cpp
+    src/project.h
+  )
+  target_include_directories(project_tests PRIVATE src)
+  target_link_libraries(project_tests PRIVATE Qt6::Core)
+  add_test(NAME project_tests COMMAND project_tests)
+endif()

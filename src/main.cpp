@@ -1,8 +1,7 @@
 #include <QApplication>
-#include <QMainWindow>
 #include <QPalette>
-#include <QTabWidget>
-#include <QWidget>
+
+#include "main_window.h"
 
 int main(int argc, char* argv[]) {
   QApplication application(argc, argv);
@@ -20,6 +19,9 @@ int main(int argc, char* argv[]) {
 
   application.setStyleSheet(R"(
     QMainWindow,
+    QMenuBar,
+    QMenu,
+    QStatusBar,
     QTabWidget::pane,
     QTabWidget QWidget {
       background-color: #090909;
@@ -52,19 +54,22 @@ int main(int argc, char* argv[]) {
       border-bottom-color: #8f3028;
       color: #ffffff;
     }
+
+    QMenuBar,
+    QMenu,
+    QStatusBar {
+      background-color: #111111;
+      color: #dddddd;
+    }
+
+    QMenuBar::item:selected,
+    QMenu::item:selected {
+      background-color: #8f3028;
+      color: #ffffff;
+    }
   )");
 
-  QMainWindow window;
-  window.setWindowTitle(QApplication::applicationDisplayName());
-  window.resize(1280, 720);
-
-  auto* tabs = new QTabWidget(&window);
-  tabs->setDocumentMode(true);
-  tabs->addTab(new QWidget(tabs), "Producer");
-  tabs->addTab(new QWidget(tabs), "Cinematography");
-  tabs->addTab(new QWidget(tabs), "Animation");
-  window.setCentralWidget(tabs);
-
+  MainWindow window;
   window.show();
 
   return application.exec();
