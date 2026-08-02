@@ -37,6 +37,10 @@ Project_Name
     ∟ shot.conf
     ∟ audio
       ∟ scene.wav
+    ∟ test_shots
+            ∟ 000001.jpg
+            ∟ ...
+            ∟ nnnnnn.jpg
     ∟ 0001_TAKE
       ∟ take.conf
       ∟ frames
