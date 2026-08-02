@@ -37,7 +37,7 @@ Project_Name
     ∟ shot.conf
     ∟ audio
       ∟ scene.wav
-    ∟ 0001_TAKE_ONE
+    ∟ 0001_TAKE
       ∟ take.conf
       ∟ frames
         ∟ preview

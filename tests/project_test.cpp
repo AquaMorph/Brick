@@ -116,6 +116,31 @@ int main(int argc, char* argv[]) {
       QFile::exists(QDir(projectPath).filePath(
           "0001_FIRST_SCENE/0001_WIDE_SHOT/shot.conf")),
       "Shot creation did not write shot.conf.");
+  passed &= expect(created->takeCount(0, 0) == 1,
+                   "Shot creation did not add its first take.");
+  passed &= expect(
+      QFile::exists(QDir(projectPath).filePath(
+          "0001_FIRST_SCENE/0001_WIDE_SHOT/0001_TAKE/take.conf")),
+      "Shot creation did not write the first take.conf.");
+  passed &= expect(
+      QDir(QDir(projectPath).filePath(
+               "0001_FIRST_SCENE/0001_WIDE_SHOT/0001_TAKE"))
+          .exists("frames/preview/high_res") &&
+          QDir(QDir(projectPath).filePath(
+               "0001_FIRST_SCENE/0001_WIDE_SHOT/0001_TAKE"))
+              .exists("frames/preview/low_res") &&
+          QDir(QDir(projectPath).filePath(
+               "0001_FIRST_SCENE/0001_WIDE_SHOT/0001_TAKE"))
+              .exists("frames/RAW"),
+      "Shot creation did not create the first take's frame folders.");
+  passed &= expect(created->createTake(0, 0, &error),
+                   "A second take was not created.");
+  passed &= expect(created->takeCount(0, 0) == 2,
+                   "Take creation did not update the shot.");
+  passed &= expect(
+      QFile::exists(QDir(projectPath).filePath(
+          "0001_FIRST_SCENE/0001_WIDE_SHOT/0002_TAKE/take.conf")),
+      "Take creation did not write take.conf.");
   passed &= expect(!created->createShot(0, "Wide Shot", &error),
                    "Shot creation should reject duplicate names.");
   passed &= expect(!created->createShot(0, "Bad/Shot", &error),
@@ -150,6 +175,11 @@ int main(int argc, char* argv[]) {
       QFile::exists(QDir(projectPath).filePath(
           "0001_FIRST_SCENE/0002_CLOSE_UP/marker.txt")),
       "Shot reorder did not preserve shot contents.");
+  passed &= expect(created->takeCount(0, 1) == 2 &&
+                       QFile::exists(QDir(projectPath).filePath(
+                           "0001_FIRST_SCENE/0002_CLOSE_UP/"
+                           "0002_TAKE/take.conf")),
+                   "Shot reorder did not preserve its takes.");
 
   passed &= expect(created->deleteShot(0, 0, &error),
                    "A shot could not be deleted.");
@@ -163,9 +193,10 @@ int main(int argc, char* argv[]) {
 
   opened = Project::open(projectPath, &error);
   passed &= expect(opened.has_value() && opened->scenes()[0] == "first scene" &&
-                       opened->shots(0).size() == 1 &&
-                       opened->shots(0)[0] == "Close Up",
-                   "The scene and its shots were not restored when reopening.");
+                        opened->shots(0).size() == 1 &&
+                        opened->shots(0)[0] == "Close Up" &&
+                        opened->takeCount(0, 0) == 2,
+                    "The scene, shots, and takes were not restored when reopening.");
 
   passed &= expect(created->moveScene(0, 1, &error),
                     "Scenes could not be reordered.");
@@ -180,6 +211,10 @@ int main(int argc, char* argv[]) {
       QFile::exists(QDir(projectPath).filePath(
           "0002_FIRST_SCENE/0001_CLOSE_UP/marker.txt")),
       "Scene reorder did not preserve its shots.");
+  passed &= expect(
+      QFile::exists(QDir(projectPath).filePath(
+          "0002_FIRST_SCENE/0001_CLOSE_UP/0002_TAKE/take.conf")),
+      "Scene reorder did not preserve its takes.");
 
   passed &= expect(created->deleteScene(0, &error),
                    "A scene could not be deleted.");
@@ -195,15 +230,20 @@ int main(int argc, char* argv[]) {
           "0001_FIRST_SCENE/0001_CLOSE_UP/marker.txt")),
       "Scene deletion did not preserve the remaining scene's shots.");
   passed &= expect(
+      QFile::exists(QDir(projectPath).filePath(
+          "0001_FIRST_SCENE/0001_CLOSE_UP/0002_TAKE/take.conf")),
+      "Scene deletion did not preserve the remaining shot's takes.");
+  passed &= expect(
       !QFile::exists(QDir(projectPath).filePath("0001_CLOSING_SCENE")),
       "Scene deletion left the deleted scene folder behind.");
 
   opened = Project::open(projectPath, &error);
   passed &= expect(opened.has_value() && opened->scenes().size() == 1 &&
-                       opened->scenes()[0] == "first scene" &&
-                       opened->shots(0).size() == 1 &&
-                       opened->shots(0)[0] == "Close Up",
-                   "The scene and shot order was not restored when reopening.");
+                        opened->scenes()[0] == "first scene" &&
+                        opened->shots(0).size() == 1 &&
+                        opened->shots(0)[0] == "Close Up" &&
+                        opened->takeCount(0, 0) == 2,
+                    "The scene, shot, and take order was not restored when reopening.");
 
   passed &= expect(!Project::create(temporaryDirectory.path(), "Example Film",
                                     &error)

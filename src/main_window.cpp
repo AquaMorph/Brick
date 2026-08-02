@@ -125,6 +125,26 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   shotPanel->addLayout(shotActions);
   directLayout->addLayout(shotPanel, 1);
 
+  auto* takePanel = new QVBoxLayout;
+  takePanel->setSpacing(12);
+
+  auto* takeHeading = new QLabel("Takes", directTab);
+  takeHeading->setFont(headingFont);
+  takePanel->addWidget(takeHeading);
+
+  takeList_ = new QListWidget(directTab);
+  takeList_->setObjectName("takeList");
+  takeList_->setAlternatingRowColors(true);
+  takePanel->addWidget(takeList_, 1);
+
+  auto* takeActions = new QHBoxLayout;
+  newTakeButton_ = new QPushButton("New Take", directTab);
+  newTakeButton_->setObjectName("newTakeButton");
+  takeActions->addWidget(newTakeButton_);
+  takeActions->addStretch();
+  takePanel->addLayout(takeActions);
+  directLayout->addLayout(takePanel, 1);
+
   connect(newSceneButton_, &QPushButton::clicked, this,
           [this] { createScene(); });
   connect(renameSceneButton_, &QPushButton::clicked, this,
@@ -151,7 +171,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   connect(moveShotDownButton_, &QPushButton::clicked, this,
           [this] { moveShot(1); });
   connect(shotList_, &QListWidget::currentRowChanged, this,
-          [this] { updateShotActions(); });
+          [this] {
+            updateShotActions();
+            refreshTakes();
+          });
+  connect(newTakeButton_, &QPushButton::clicked, this,
+          [this] { createTake(); });
 
   tabs->addTab(directTab, "Direct");
   tabs->addTab(new QWidget(tabs), "Cinematography");
@@ -160,6 +185,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
   updateSceneActions();
   updateShotActions();
+  updateTakeActions();
   statusBar()->showMessage("No project open");
 
   const QString lastProjectDirectory =
@@ -461,6 +487,49 @@ void MainWindow::updateShotActions() {
   deleteShotButton_->setEnabled(hasScene && row >= 0);
   moveShotUpButton_->setEnabled(hasScene && row > 0);
   moveShotDownButton_->setEnabled(hasScene && row >= 0 && row + 1 < count);
+}
+
+
+void MainWindow::createTake() {
+  const int sceneRow = sceneList_->currentRow();
+  const int shotRow = shotList_->currentRow();
+  if (!project_.has_value() || sceneRow < 0 || shotRow < 0) {
+    return;
+  }
+
+  QString error;
+  if (!project_->createTake(sceneRow, shotRow, &error)) {
+    QMessageBox::critical(this, "Could Not Create Take", error);
+    return;
+  }
+  refreshTakes(project_->takeCount(sceneRow, shotRow) - 1);
+}
+
+
+void MainWindow::refreshTakes(int selectedRow) {
+  takeList_->clear();
+  const int sceneRow = sceneList_->currentRow();
+  const int shotRow = shotList_->currentRow();
+  if (project_.has_value() && sceneRow >= 0 && shotRow >= 0) {
+    const int count = project_->takeCount(sceneRow, shotRow);
+    for (int index = 0; index < count; ++index) {
+      takeList_->addItem(QString("Take %1").arg(
+          index + 1, 4, 10, QLatin1Char('0')));
+    }
+    const int row = selectedRow >= 0 ? selectedRow : 0;
+    if (row < takeList_->count()) {
+      takeList_->setCurrentRow(row);
+    }
+  }
+  updateTakeActions();
+}
+
+
+void MainWindow::updateTakeActions() {
+  const bool hasShot = project_.has_value() &&
+                       sceneList_->currentRow() >= 0 &&
+                       shotList_->currentRow() >= 0;
+  newTakeButton_->setEnabled(hasShot);
 }
 
 

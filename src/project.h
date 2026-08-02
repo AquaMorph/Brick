@@ -15,6 +15,7 @@ class Project {
   [[nodiscard]] const QString& directory() const;
   [[nodiscard]] const std::vector<QString>& scenes() const;
   [[nodiscard]] const std::vector<QString>& shots(int sceneIndex) const;
+  [[nodiscard]] int takeCount(int sceneIndex, int shotIndex) const;
 
   bool createScene(const QString& name, QString* error);
   bool renameScene(int index, const QString& name, QString* error);
@@ -25,13 +26,16 @@ class Project {
                   QString* error);
   bool deleteShot(int sceneIndex, int shotIndex, QString* error);
   bool moveShot(int sceneIndex, int from, int to, QString* error);
+  bool createTake(int sceneIndex, int shotIndex, QString* error);
 
  private:
   Project(QString name, QString directory, std::vector<QString> scenes = {},
-          std::vector<std::vector<QString>> shots = {});
+          std::vector<std::vector<QString>> shots = {},
+          std::vector<std::vector<int>> takeCounts = {});
 
   QString name_;
   QString directory_;
   std::vector<QString> scenes_;
   std::vector<std::vector<QString>> shots_;
+  std::vector<std::vector<int>> takeCounts_;
 };

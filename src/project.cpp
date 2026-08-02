@@ -17,9 +17,11 @@ namespace {
 constexpr int kProjectFormatVersion = 1;
 constexpr int kSceneFormatVersion = 1;
 constexpr int kShotFormatVersion = 1;
+constexpr int kTakeFormatVersion = 1;
 constexpr auto kConfigFileName = "project.conf";
 constexpr auto kSceneConfigFileName = "scene.conf";
 constexpr auto kShotConfigFileName = "shot.conf";
+constexpr auto kTakeConfigFileName = "take.conf";
 
 bool isValidProjectName(const QString& name) {
   static const QRegularExpression validName(R"(^[A-Za-z0-9]+(?: +[A-Za-z0-9]+)*$)");
@@ -42,10 +44,45 @@ QString directoryNameForShot(int index, QString name) {
       .arg(name.replace(' ', '_').toUpper());
 }
 
+QString directoryNameForTake(int index) {
+  return QString("%1_TAKE").arg(index + 1, 4, 10, QLatin1Char('0'));
+}
+
 void setError(QString* error, const QString& message) {
   if (error != nullptr) {
     *error = message;
   }
+}
+
+bool createTakeDirectory(QDir shot, int index, QString* error) {
+  const QString takeDirectory = directoryNameForTake(index);
+  if (!shot.mkdir(takeDirectory)) {
+    setError(error, "Brick could not create the take folder.");
+    return false;
+  }
+
+  QDir take(shot.filePath(takeDirectory));
+  if (!take.mkpath("frames/preview/high_res") ||
+      !take.mkpath("frames/preview/low_res") || !take.mkpath("frames/RAW")) {
+    take.removeRecursively();
+    setError(error, "Brick could not create the take frame folders.");
+    return false;
+  }
+
+  const QString configPath = take.filePath(kTakeConfigFileName);
+  QSettings config(configPath, QSettings::IniFormat);
+  config.beginGroup("Take");
+  config.setValue("formatVersion", kTakeFormatVersion);
+  config.setValue("createdUtc",
+                  QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+  config.endGroup();
+  config.sync();
+  if (config.status() != QSettings::NoError) {
+    take.removeRecursively();
+    setError(error, "Brick could not write take.conf.");
+    return false;
+  }
+  return true;
 }
 
 struct ContentDirectory {
@@ -105,11 +142,13 @@ bool renameContentDirectories(
 
 
 Project::Project(QString name, QString directory, std::vector<QString> scenes,
-                 std::vector<std::vector<QString>> shots)
+                  std::vector<std::vector<QString>> shots,
+                  std::vector<std::vector<int>> takeCounts)
     : name_(std::move(name)),
       directory_(std::move(directory)),
       scenes_(std::move(scenes)),
-      shots_(std::move(shots)) {}
+      shots_(std::move(shots)),
+      takeCounts_(std::move(takeCounts)) {}
 
 
 std::optional<Project> Project::create(const QString& parentDirectory,
@@ -203,8 +242,10 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
       QDir::Name);
   std::vector<QString> scenes;
   std::vector<std::vector<QString>> shots;
+  std::vector<std::vector<int>> takeCounts;
   scenes.reserve(sceneDirectories.size());
   shots.reserve(sceneDirectories.size());
+  takeCounts.reserve(sceneDirectories.size());
   for (int index = 0; index < sceneDirectories.size(); ++index) {
     const QString& sceneDirectory = sceneDirectories[index];
     if (!sceneDirectory.startsWith(
@@ -234,7 +275,9 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
         {"[0-9][0-9][0-9][0-9]_*"}, QDir::Dirs | QDir::NoDotAndDotDot,
         QDir::Name);
     std::vector<QString> sceneShots;
+    std::vector<int> sceneTakeCounts;
     sceneShots.reserve(shotDirectories.size());
+    sceneTakeCounts.reserve(shotDirectories.size());
     for (int shotIndex = 0; shotIndex < shotDirectories.size(); ++shotIndex) {
       const QString& shotDirectory = shotDirectories[shotIndex];
       if (!shotDirectory.startsWith(
@@ -258,11 +301,39 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
         return std::nullopt;
       }
       sceneShots.push_back(shotName);
+
+      QDir shot(scene.filePath(shotDirectory));
+      const QStringList takeDirectories = shot.entryList(
+          {"[0-9][0-9][0-9][0-9]_*"}, QDir::Dirs | QDir::NoDotAndDotDot,
+          QDir::Name);
+      for (int takeIndex = 0; takeIndex < takeDirectories.size(); ++takeIndex) {
+        const QString& takeDirectory = takeDirectories[takeIndex];
+        if (takeDirectory != directoryNameForTake(takeIndex)) {
+          setError(error, "A shot contains incorrectly numbered takes.");
+          return std::nullopt;
+        }
+
+        QSettings takeConfig(shot.filePath(takeDirectory + '/' +
+                                           kTakeConfigFileName),
+                             QSettings::IniFormat);
+        takeConfig.beginGroup("Take");
+        const int takeFormatVersion =
+            takeConfig.value("formatVersion").toInt();
+        takeConfig.endGroup();
+        if (takeConfig.status() != QSettings::NoError ||
+            takeFormatVersion != kTakeFormatVersion) {
+          setError(error, "A shot contains an invalid take.");
+          return std::nullopt;
+        }
+      }
+      sceneTakeCounts.push_back(takeDirectories.size());
     }
     shots.push_back(std::move(sceneShots));
+    takeCounts.push_back(std::move(sceneTakeCounts));
   }
 
-  return Project(name, projectDirectory, std::move(scenes), std::move(shots));
+  return Project(name, projectDirectory, std::move(scenes), std::move(shots),
+                 std::move(takeCounts));
 }
 
 
@@ -277,6 +348,11 @@ const std::vector<QString>& Project::scenes() const { return scenes_; }
 
 const std::vector<QString>& Project::shots(int sceneIndex) const {
   return shots_.at(sceneIndex);
+}
+
+
+int Project::takeCount(int sceneIndex, int shotIndex) const {
+  return takeCounts_.at(sceneIndex).at(shotIndex);
 }
 
 
@@ -320,6 +396,7 @@ bool Project::createScene(const QString& name, QString* error) {
 
   scenes_.push_back(name);
   shots_.emplace_back();
+  takeCounts_.emplace_back();
   return true;
 }
 
@@ -411,6 +488,7 @@ bool Project::deleteScene(int index, QString* error) {
 
   scenes_.erase(scenes_.begin() + index);
   shots_.erase(shots_.begin() + index);
+  takeCounts_.erase(takeCounts_.begin() + index);
   QDir(project.filePath(tombstone)).removeRecursively();
   return true;
 }
@@ -446,6 +524,9 @@ bool Project::moveScene(int from, int to, QString* error) {
   auto movedShots = std::move(shots_[from]);
   shots_.erase(shots_.begin() + from);
   shots_.insert(shots_.begin() + to, std::move(movedShots));
+  auto movedTakeCounts = std::move(takeCounts_[from]);
+  takeCounts_.erase(takeCounts_.begin() + from);
+  takeCounts_.insert(takeCounts_.begin() + to, std::move(movedTakeCounts));
   return true;
 }
 
@@ -496,7 +577,13 @@ bool Project::createShot(int sceneIndex, const QString& name, QString* error) {
     return false;
   }
 
+  if (!createTakeDirectory(QDir(scene.filePath(shotDirectory)), 0, error)) {
+    QDir(scene.filePath(shotDirectory)).removeRecursively();
+    return false;
+  }
+
   sceneShots.push_back(name);
+  takeCounts_[sceneIndex].push_back(1);
   return true;
 }
 
@@ -597,6 +684,7 @@ bool Project::deleteShot(int sceneIndex, int shotIndex, QString* error) {
   }
 
   sceneShots.erase(sceneShots.begin() + shotIndex);
+  takeCounts_[sceneIndex].erase(takeCounts_[sceneIndex].begin() + shotIndex);
   QDir(scene.filePath(tombstone)).removeRecursively();
   return true;
 }
@@ -638,5 +726,33 @@ bool Project::moveShot(int sceneIndex, int from, int to, QString* error) {
   const QString movedName = sceneShots[from];
   sceneShots.erase(sceneShots.begin() + from);
   sceneShots.insert(sceneShots.begin() + to, movedName);
+  const int movedTakeCount = takeCounts_[sceneIndex][from];
+  takeCounts_[sceneIndex].erase(takeCounts_[sceneIndex].begin() + from);
+  takeCounts_[sceneIndex].insert(takeCounts_[sceneIndex].begin() + to,
+                                 movedTakeCount);
+  return true;
+}
+
+
+bool Project::createTake(int sceneIndex, int shotIndex, QString* error) {
+  if (sceneIndex < 0 || sceneIndex >= static_cast<int>(scenes_.size()) ||
+      shotIndex < 0 || shotIndex >= static_cast<int>(shots_[sceneIndex].size())) {
+    setError(error, "The selected shot does not exist.");
+    return false;
+  }
+  int& count = takeCounts_[sceneIndex][shotIndex];
+  if (count >= 9999) {
+    setError(error, "A shot cannot contain more than 9999 takes.");
+    return false;
+  }
+
+  QDir shot(QDir(directory_).filePath(
+      directoryNameForScene(sceneIndex, scenes_[sceneIndex]) + '/' +
+      directoryNameForShot(shotIndex, shots_[sceneIndex][shotIndex])));
+  if (!createTakeDirectory(shot, count, error)) {
+    return false;
+  }
+
+  ++count;
   return true;
 }
