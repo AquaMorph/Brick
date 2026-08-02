@@ -35,6 +35,11 @@ int main(int argc, char* argv[]) {
       border: 0;
     }
 
+    QFrame#directSectionDivider {
+      border: 0;
+      background-color: #282828;
+    }
+
     QTabBar {
       background-color: #111111;
     }

@@ -4,6 +4,7 @@
 #include <QApplication>
 #include <QFileDialog>
 #include <QFont>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QKeySequence>
@@ -92,6 +93,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   auto* filmLayout = new QHBoxLayout;
   filmLayout->setSpacing(24);
 
+  auto addSectionDivider = [filmLayout, directTab] {
+    auto* divider = new QFrame(directTab);
+    divider->setObjectName("directSectionDivider");
+    divider->setFrameShape(QFrame::VLine);
+    divider->setFixedWidth(1);
+    filmLayout->addWidget(divider);
+  };
+
   auto* scenePanel = new QVBoxLayout;
   scenePanel->setSpacing(12);
 
@@ -126,6 +135,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   sceneActions->addWidget(moveSceneDownButton_);
   scenePanel->addLayout(sceneActions);
   filmLayout->addLayout(scenePanel, 1);
+  addSectionDivider();
 
   auto* shotPanel = new QVBoxLayout;
   shotPanel->setSpacing(12);
@@ -158,6 +168,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   shotActions->addWidget(moveShotDownButton_);
   shotPanel->addLayout(shotActions);
   filmLayout->addLayout(shotPanel, 1);
+  addSectionDivider();
 
   auto* takePanel = new QVBoxLayout;
   takePanel->setSpacing(12);
