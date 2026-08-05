@@ -5,10 +5,13 @@
 #include <QImageCapture>
 #include <QMediaCaptureSession>
 #include <QMediaDevices>
+#include <QSize>
 #include <QVideoFrame>
 #include <QVideoSink>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <map>
 #include <utility>
 
@@ -107,6 +110,29 @@ QString focusModeLabel(QCamera::FocusMode mode) {
   }
 }
 
+QString resolutionValue(const QSize& resolution) {
+  return QString("%1x%2").arg(resolution.width()).arg(resolution.height());
+}
+
+QString formatValue(const QCameraFormat& format) {
+  return QString("%1x%2@%3-%4")
+      .arg(format.resolution().width())
+      .arg(format.resolution().height())
+      .arg(format.minFrameRate(), 0, 'g', 4)
+      .arg(format.maxFrameRate(), 0, 'g', 4);
+}
+
+QString formatLabel(const QCameraFormat& format) {
+  const bool fixedRate = std::abs(format.minFrameRate() -
+                                  format.maxFrameRate()) < 0.01;
+  const QString rate = fixedRate
+                           ? QString::number(format.maxFrameRate(), 'g', 3)
+                           : QString("%1-%2")
+                                 .arg(format.minFrameRate(), 0, 'g', 3)
+                                 .arg(format.maxFrameRate(), 0, 'g', 3);
+  return resolutionValue(format.resolution()) + " @ " + rate + " fps";
+}
+
 class WebcamSession final : public CameraSession {
  public:
   WebcamSession(QCameraDevice device, QObject* parent)
@@ -117,6 +143,39 @@ class WebcamSession final : public CameraSession {
     mediaSession_.setCamera(camera_.get());
     mediaSession_.setImageCapture(capture_.get());
     mediaSession_.setVideoSink(sink_.get());
+
+    const auto features = camera_->supportedFeatures();
+    if (camera_->isExposureModeSupported(QCamera::ExposureManual)) {
+      int iso = camera_->isoSensitivity();
+      float exposureTime = camera_->exposureTime();
+      camera_->setExposureMode(QCamera::ExposureManual);
+      if (features.testFlag(QCamera::Feature::IsoSensitivity) &&
+          camera_->minimumIsoSensitivity() > 0 &&
+          camera_->maximumIsoSensitivity() >= camera_->minimumIsoSensitivity()) {
+        iso = std::clamp(iso > 0 ? iso : 100,
+                         camera_->minimumIsoSensitivity(),
+                         camera_->maximumIsoSensitivity());
+        camera_->setManualIsoSensitivity(iso);
+      }
+      if (features.testFlag(QCamera::Feature::ManualExposureTime) &&
+          camera_->minimumExposureTime() > 0 &&
+          camera_->maximumExposureTime() >= camera_->minimumExposureTime()) {
+        exposureTime = std::clamp(exposureTime > 0 ? exposureTime : 1.0F / 60.0F,
+                                  camera_->minimumExposureTime(),
+                                  camera_->maximumExposureTime());
+        camera_->setManualExposureTime(exposureTime);
+      }
+    }
+    if (camera_->isWhiteBalanceModeSupported(QCamera::WhiteBalanceManual)) {
+      camera_->setWhiteBalanceMode(QCamera::WhiteBalanceManual);
+      if (features.testFlag(QCamera::Feature::ColorTemperature) &&
+          camera_->colorTemperature() <= 0) {
+        camera_->setColorTemperature(5600);
+      }
+    }
+    if (camera_->isFocusModeSupported(QCamera::FocusModeManual)) {
+      camera_->setFocusMode(QCamera::FocusModeManual);
+    }
 
     connect(sink_.get(), &QVideoSink::videoFrameChanged, this,
             [this](const QVideoFrame& frame) {
@@ -135,8 +194,34 @@ class WebcamSession final : public CameraSession {
             });
     connect(camera_.get(), &QCamera::errorOccurred, this,
             [this](QCamera::Error, const QString& message) {
-              emit errorOccurred("Webcam error: " + message);
-            });
+               emit errorOccurred("Webcam error: " + message);
+             });
+    connect(camera_.get(), &QCamera::supportedFeaturesChanged, this,
+            &CameraSession::settingsChanged);
+    connect(camera_.get(), &QCamera::cameraFormatChanged, this,
+            &CameraSession::settingsChanged);
+    connect(camera_.get(), &QCamera::manualIsoSensitivityChanged, this,
+            [this] { emit settingsChanged(); });
+    connect(camera_.get(), &QCamera::manualExposureTimeChanged, this,
+            [this] { emit settingsChanged(); });
+    connect(camera_.get(), &QCamera::exposureCompensationChanged, this,
+            [this] { emit settingsChanged(); });
+    connect(camera_.get(), &QCamera::exposureModeChanged, this,
+            [this] { emit settingsChanged(); });
+    connect(camera_.get(), &QCamera::whiteBalanceModeChanged, this,
+            [this] { emit settingsChanged(); });
+    connect(camera_.get(), &QCamera::colorTemperatureChanged, this,
+            [this] { emit settingsChanged(); });
+    connect(camera_.get(), &QCamera::focusModeChanged, this,
+            [this] { emit settingsChanged(); });
+    connect(camera_.get(), &QCamera::focusDistanceChanged, this,
+            [this] { emit settingsChanged(); });
+    connect(camera_.get(), &QCamera::zoomFactorChanged, this,
+            [this] { emit settingsChanged(); });
+    connect(camera_.get(), &QCamera::flashModeChanged, this,
+            [this] { emit settingsChanged(); });
+    connect(camera_.get(), &QCamera::torchModeChanged, this,
+            [this] { emit settingsChanged(); });
   }
 
   [[nodiscard]] QString backend() const override { return "webcam"; }
@@ -171,39 +256,77 @@ class WebcamSession final : public CameraSession {
 
     if (camera_->supportedFeatures().testFlag(
             QCamera::Feature::IsoSensitivity)) {
-      CameraSetting setting{"iso", "ISO",
-                            QString::number(camera_->manualIsoSensitivity()), {}};
-      setting.choices.push_back({"-1", "Auto"});
       const int minimum = std::max(1, camera_->minimumIsoSensitivity());
       const int maximum = camera_->maximumIsoSensitivity();
-      for (int value : {100, 200, 400, 800, 1600, 3200, 6400}) {
-        if (value >= minimum && value <= maximum) {
-          setting.choices.push_back(
-              {QString::number(value), QString::number(value)});
-        }
+      int value = camera_->manualIsoSensitivity();
+      if (value <= 0 && maximum >= minimum) {
+        value = std::clamp(camera_->isoSensitivity() > 0
+                               ? camera_->isoSensitivity()
+                               : 100,
+                           minimum, maximum);
       }
+      CameraSetting setting{"iso", "ISO",
+                            QString::number(value), {}};
+      setting.type = CameraSettingType::IntegerRange;
+      setting.minimum = minimum;
+      setting.maximum = maximum;
+      setting.step = 1;
       result.push_back(std::move(setting));
     }
 
     if (camera_->supportedFeatures().testFlag(
             QCamera::Feature::ManualExposureTime)) {
+      float exposureTime = camera_->manualExposureTime();
+      if (exposureTime <= 0 && camera_->minimumExposureTime() > 0 &&
+          camera_->maximumExposureTime() >= camera_->minimumExposureTime()) {
+        exposureTime = std::clamp(camera_->exposureTime() > 0
+                                      ? camera_->exposureTime()
+                                      : 1.0F / 60.0F,
+                                  camera_->minimumExposureTime(),
+                                  camera_->maximumExposureTime());
+      }
       CameraSetting setting{
           "exposureTime", "Shutter",
-          QString::number(camera_->manualExposureTime(), 'g', 6),
+          QString::number(exposureTime, 'g', 6),
           {{"-1", "Auto"}}};
-      for (const auto& [seconds, label] :
-           std::vector<std::pair<double, QString>>{{1.0 / 1000.0, "1/1000"},
-                                                   {1.0 / 500.0, "1/500"},
-                                                   {1.0 / 250.0, "1/250"},
-                                                   {1.0 / 125.0, "1/125"},
-                                                   {1.0 / 60.0, "1/60"},
-                                                   {1.0 / 30.0, "1/30"},
-                                                   {1.0 / 15.0, "1/15"}}) {
+      for (const auto& [seconds, label] : std::vector<std::pair<double, QString>>{
+               {1.0 / 8000.0, "1/8000"}, {1.0 / 4000.0, "1/4000"},
+               {1.0 / 2000.0, "1/2000"}, {1.0 / 1000.0, "1/1000"},
+               {1.0 / 500.0, "1/500"},   {1.0 / 250.0, "1/250"},
+               {1.0 / 125.0, "1/125"},   {1.0 / 60.0, "1/60"},
+               {1.0 / 30.0, "1/30"},     {1.0 / 15.0, "1/15"},
+               {1.0 / 8.0, "1/8"},       {1.0 / 4.0, "1/4"},
+               {1.0 / 2.0, "1/2"},       {1.0, "1 s"},
+               {2.0, "2 s"},             {4.0, "4 s"},
+               {8.0, "8 s"},             {15.0, "15 s"},
+               {30.0, "30 s"}}) {
         if (seconds >= camera_->minimumExposureTime() &&
             seconds <= camera_->maximumExposureTime()) {
           setting.choices.push_back({QString::number(seconds, 'g', 8), label});
         }
       }
+      if (exposureTime > 0 &&
+          std::none_of(setting.choices.begin(), setting.choices.end(),
+                       [&setting](const CameraSettingChoice& choice) {
+                         return std::abs(choice.value.toDouble() -
+                                         setting.value.toDouble()) < 0.000001;
+                       })) {
+        setting.choices.push_back(
+            {setting.value, QString::number(exposureTime, 'g', 4) + " s"});
+      }
+      result.push_back(std::move(setting));
+    }
+
+    if (camera_->supportedFeatures().testFlag(
+            QCamera::Feature::ExposureCompensation)) {
+      CameraSetting setting{"exposureCompensation", "Exposure compensation",
+                            QString::number(camera_->exposureCompensation()), {}};
+      setting.type = CameraSettingType::DecimalRange;
+      setting.minimum = -4;
+      setting.maximum = 4;
+      setting.step = 0.1;
+      setting.decimals = 1;
+      setting.suffix = " EV";
       result.push_back(std::move(setting));
     }
 
@@ -226,6 +349,20 @@ class WebcamSession final : public CameraSession {
       result.push_back(std::move(setting));
     }
 
+
+    if (camera_->supportedFeatures().testFlag(QCamera::Feature::ColorTemperature)) {
+      const int colorTemperature =
+          camera_->colorTemperature() > 0 ? camera_->colorTemperature() : 5600;
+      CameraSetting setting{"colorTemperature", "Color temperature",
+                            QString::number(colorTemperature), {}};
+      setting.type = CameraSettingType::IntegerRange;
+      setting.minimum = 2000;
+      setting.maximum = 10000;
+      setting.step = 100;
+      setting.suffix = " K";
+      result.push_back(std::move(setting));
+    }
+
     std::vector<QCamera::FocusMode> focusModes;
     for (int value = QCamera::FocusModeAuto;
          value <= QCamera::FocusModeManual; ++value) {
@@ -243,6 +380,102 @@ class WebcamSession final : public CameraSession {
             {QString::number(static_cast<int>(mode)), focusModeLabel(mode)});
       }
       result.push_back(std::move(setting));
+    }
+
+
+    if (camera_->supportedFeatures().testFlag(QCamera::Feature::FocusDistance)) {
+      CameraSetting setting{"focusDistance", "Focus distance",
+                            QString::number(camera_->focusDistance(), 'g', 4), {}};
+      setting.type = CameraSettingType::DecimalRange;
+      setting.minimum = 0;
+      setting.maximum = 1;
+      setting.step = 0.01;
+      setting.decimals = 2;
+      result.push_back(std::move(setting));
+    }
+
+    if (camera_->maximumZoomFactor() > camera_->minimumZoomFactor()) {
+      CameraSetting setting{"zoom", "Zoom",
+                            QString::number(camera_->zoomFactor(), 'g', 4), {}};
+      setting.type = CameraSettingType::DecimalRange;
+      setting.minimum = camera_->minimumZoomFactor();
+      setting.maximum = camera_->maximumZoomFactor();
+      setting.step = 0.1;
+      setting.decimals = 1;
+      setting.suffix = "x";
+      result.push_back(std::move(setting));
+    }
+
+    const auto formats = device_.videoFormats();
+    if (!formats.empty()) {
+      CameraSetting setting{"videoFormat", "Video format",
+                            formatValue(camera_->cameraFormat()), {}};
+      for (const QCameraFormat& format : formats) {
+        const QString value = formatValue(format);
+        if (std::none_of(setting.choices.begin(), setting.choices.end(),
+                         [&value](const CameraSettingChoice& choice) {
+                           return choice.value == value;
+                         })) {
+          setting.choices.push_back({value, formatLabel(format)});
+        }
+      }
+      result.push_back(std::move(setting));
+    }
+
+    const auto resolutions = device_.photoResolutions();
+    if (!resolutions.empty()) {
+      CameraSetting setting{"photoResolution", "Photo resolution",
+                            resolutionValue(capture_->resolution()), {}};
+      for (const QSize& resolution : resolutions) {
+        setting.choices.push_back(
+            {resolutionValue(resolution), resolutionValue(resolution)});
+      }
+      result.push_back(std::move(setting));
+    }
+
+    CameraSetting quality{"photoQuality", "Photo quality",
+                          QString::number(static_cast<int>(capture_->quality())),
+                          {}};
+    for (const auto& [value, label] :
+         std::array<std::pair<QImageCapture::Quality, QString>, 5>{
+             {{QImageCapture::VeryLowQuality, "Very low"},
+              {QImageCapture::LowQuality, "Low"},
+              {QImageCapture::NormalQuality, "Normal"},
+              {QImageCapture::HighQuality, "High"},
+              {QImageCapture::VeryHighQuality, "Very high"}}}) {
+      quality.choices.push_back(
+          {QString::number(static_cast<int>(value)), label});
+    }
+    result.push_back(std::move(quality));
+
+    CameraSetting flash{"flashMode", "Flash",
+                        QString::number(static_cast<int>(camera_->flashMode())), {}};
+    for (const auto& [mode, label] :
+         std::array<std::pair<QCamera::FlashMode, QString>, 3>{
+             {{QCamera::FlashOff, "Off"}, {QCamera::FlashOn, "On"},
+              {QCamera::FlashAuto, "Auto"}}}) {
+      if (camera_->isFlashModeSupported(mode)) {
+        flash.choices.push_back(
+            {QString::number(static_cast<int>(mode)), label});
+      }
+    }
+    if (!flash.choices.empty()) {
+      result.push_back(std::move(flash));
+    }
+
+    CameraSetting torch{"torchMode", "Torch",
+                        QString::number(static_cast<int>(camera_->torchMode())), {}};
+    for (const auto& [mode, label] :
+         std::array<std::pair<QCamera::TorchMode, QString>, 3>{
+             {{QCamera::TorchOff, "Off"}, {QCamera::TorchOn, "On"},
+              {QCamera::TorchAuto, "Auto"}}}) {
+      if (camera_->isTorchModeSupported(mode)) {
+        torch.choices.push_back(
+            {QString::number(static_cast<int>(mode)), label});
+      }
+    }
+    if (!torch.choices.empty()) {
+      result.push_back(std::move(torch));
     }
     return result;
   }
@@ -287,6 +520,43 @@ class WebcamSession final : public CameraSession {
     } else if (id == "focusMode") {
       camera_->setFocusMode(
           static_cast<QCamera::FocusMode>(value.toInt(&converted)));
+    } else if (id == "exposureCompensation") {
+      camera_->setExposureCompensation(value.toFloat(&converted));
+    } else if (id == "colorTemperature") {
+      camera_->setColorTemperature(value.toInt(&converted));
+    } else if (id == "focusDistance") {
+      camera_->setFocusDistance(value.toFloat(&converted));
+    } else if (id == "zoom") {
+      camera_->setZoomFactor(value.toFloat(&converted));
+    } else if (id == "videoFormat") {
+      const auto formats = device_.videoFormats();
+      const auto format = std::find_if(
+          formats.begin(), formats.end(), [&value](const QCameraFormat& candidate) {
+            return formatValue(candidate) == value;
+          });
+      converted = format != formats.end();
+      if (converted) {
+        camera_->setCameraFormat(*format);
+      }
+    } else if (id == "photoResolution") {
+      const auto resolutions = device_.photoResolutions();
+      const auto resolution = std::find_if(
+          resolutions.begin(), resolutions.end(), [&value](const QSize& candidate) {
+            return resolutionValue(candidate) == value;
+          });
+      converted = resolution != resolutions.end();
+      if (converted) {
+        capture_->setResolution(*resolution);
+      }
+    } else if (id == "photoQuality") {
+      capture_->setQuality(
+          static_cast<QImageCapture::Quality>(value.toInt(&converted)));
+    } else if (id == "flashMode") {
+      camera_->setFlashMode(
+          static_cast<QCamera::FlashMode>(value.toInt(&converted)));
+    } else if (id == "torchMode") {
+      camera_->setTorchMode(
+          static_cast<QCamera::TorchMode>(value.toInt(&converted)));
     }
     if (!converted) {
       emit errorOccurred("The webcam rejected an invalid camera setting.");

@@ -2,6 +2,7 @@
 
 #include <QComboBox>
 #include <QDateTime>
+#include <QDoubleSpinBox>
 #include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -15,14 +16,19 @@
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSizePolicy>
+#include <QSlider>
 #include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 
 namespace {
 
 QString choiceLabel(const CameraSetting& setting, const QString& value) {
+  if (setting.type != CameraSettingType::Choice) {
+    return value + setting.suffix;
+  }
   const auto choice = std::find_if(
       setting.choices.begin(), setting.choices.end(),
       [&value](const CameraSettingChoice& candidate) {
@@ -276,6 +282,67 @@ void CinematographyWidget::rebuildSettings() {
     return;
   }
   for (const CameraSetting& setting : settings_) {
+    if (setting.type != CameraSettingType::Choice) {
+      auto* control = new QWidget(this);
+      auto* layout = new QHBoxLayout(control);
+      layout->setContentsMargins(0, 0, 0, 0);
+      layout->setSpacing(8);
+      auto* slider = new QSlider(Qt::Horizontal, control);
+      auto* spin = new QDoubleSpinBox(control);
+      const double range = setting.maximum - setting.minimum;
+      const int sliderSteps = std::max(
+          1, static_cast<int>(std::round(range / setting.step)));
+      slider->setRange(0, sliderSteps);
+      spin->setRange(setting.minimum, setting.maximum);
+      spin->setSingleStep(setting.step);
+      spin->setDecimals(setting.decimals);
+      spin->setSuffix(setting.suffix);
+      spin->setKeyboardTracking(false);
+      const double value = std::clamp(setting.value.toDouble(), setting.minimum,
+                                      setting.maximum);
+      slider->setValue(range > 0 ? static_cast<int>(
+                                      (value - setting.minimum) / range *
+                                      sliderSteps)
+                                 : 0);
+      spin->setValue(value);
+      layout->addWidget(slider, 1);
+      layout->addWidget(spin);
+
+      const auto applyValue = [this, id = setting.id, spin] {
+        if (!camera_) {
+          return;
+        }
+        const auto current = std::find_if(
+            settings_.begin(), settings_.end(), [&id](const CameraSetting& item) {
+              return item.id == id;
+            });
+        if (current == settings_.end()) {
+          return;
+        }
+        current->value = QString::number(spin->value(), 'f', current->decimals);
+        camera_->setSetting(id, current->value);
+        saveCameraSettings();
+      };
+      connect(slider, &QSlider::valueChanged, this,
+              [spin, minimum = setting.minimum, range,
+               sliderSteps](int position) {
+                QSignalBlocker blocker(spin);
+                spin->setValue(minimum + range * position / sliderSteps);
+              });
+      connect(slider, &QSlider::sliderReleased, this, applyValue);
+      connect(spin, &QDoubleSpinBox::valueChanged, this,
+              [slider, minimum = setting.minimum, range,
+               sliderSteps](double newValue) {
+                QSignalBlocker blocker(slider);
+                slider->setValue(range > 0 ? static_cast<int>(
+                                                (newValue - minimum) / range *
+                                                sliderSteps)
+                                           : 0);
+              });
+      connect(spin, &QDoubleSpinBox::editingFinished, this, applyValue);
+      settingsLayout_->addRow(setting.label + ':', control);
+      continue;
+    }
     auto* combo = new QComboBox(this);
     for (const auto& choice : setting.choices) {
       combo->addItem(choice.label, choice.value);

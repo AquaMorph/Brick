@@ -18,11 +18,19 @@ struct CameraSettingChoice {
   QString label;
 };
 
+enum class CameraSettingType { Choice, IntegerRange, DecimalRange };
+
 struct CameraSetting {
   QString id;
   QString label;
   QString value;
   std::vector<CameraSettingChoice> choices;
+  CameraSettingType type = CameraSettingType::Choice;
+  double minimum = 0.0;
+  double maximum = 0.0;
+  double step = 1.0;
+  int decimals = 0;
+  QString suffix;
 };
 
 class CameraSession : public QObject {
