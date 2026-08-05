@@ -15,6 +15,15 @@
 #include <map>
 #include <utility>
 
+#ifdef Q_OS_LINUX
+#include <fcntl.h>
+#include <linux/videodev2.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+
+#include <optional>
+#endif
+
 #ifdef BRICK_HAS_CANON_EDSDK
 #include "canon_camera.h"
 #endif
@@ -133,6 +142,35 @@ QString formatLabel(const QCameraFormat& format) {
   return resolutionValue(format.resolution()) + " @ " + rate + " fps";
 }
 
+#ifdef Q_OS_LINUX
+struct V4l2Control {
+  quint32 id;
+  int value;
+  int minimum;
+  int maximum;
+  int step;
+};
+
+std::optional<V4l2Control> v4l2Control(int descriptor, quint32 id) {
+  if (descriptor < 0) {
+    return std::nullopt;
+  }
+  v4l2_queryctrl query{};
+  query.id = id;
+  if (ioctl(descriptor, VIDIOC_QUERYCTRL, &query) < 0 ||
+      query.flags & (V4L2_CTRL_FLAG_DISABLED | V4L2_CTRL_FLAG_READ_ONLY)) {
+    return std::nullopt;
+  }
+  v4l2_control control{};
+  control.id = id;
+  if (ioctl(descriptor, VIDIOC_G_CTRL, &control) < 0) {
+    return std::nullopt;
+  }
+  return V4l2Control{id, control.value, query.minimum, query.maximum,
+                     std::max(1, query.step)};
+}
+#endif
+
 class WebcamSession final : public CameraSession {
  public:
   WebcamSession(QCameraDevice device, QObject* parent)
@@ -140,6 +178,20 @@ class WebcamSession final : public CameraSession {
     camera_ = std::make_unique<QCamera>(device_);
     capture_ = std::make_unique<QImageCapture>();
     sink_ = std::make_unique<QVideoSink>();
+#ifdef Q_OS_LINUX
+    const QString id = QString::fromUtf8(device_.id());
+    const int pathStart = id.indexOf("/dev/video");
+    if (pathStart >= 0) {
+      const QByteArray path = id.sliced(pathStart).toUtf8();
+      v4l2Descriptor_ = open(path.constData(), O_RDWR | O_NONBLOCK);
+    }
+    if (v4l2Control(v4l2Descriptor_, V4L2_CID_EXPOSURE_ABSOLUTE)) {
+      v4l2_control automaticExposure{};
+      automaticExposure.id = V4L2_CID_EXPOSURE_AUTO;
+      automaticExposure.value = V4L2_EXPOSURE_MANUAL;
+      ioctl(v4l2Descriptor_, VIDIOC_S_CTRL, &automaticExposure);
+    }
+#endif
     mediaSession_.setCamera(camera_.get());
     mediaSession_.setImageCapture(capture_.get());
     mediaSession_.setVideoSink(sink_.get());
@@ -218,10 +270,14 @@ class WebcamSession final : public CameraSession {
             [this] { emit settingsChanged(); });
     connect(camera_.get(), &QCamera::zoomFactorChanged, this,
             [this] { emit settingsChanged(); });
-    connect(camera_.get(), &QCamera::flashModeChanged, this,
-            [this] { emit settingsChanged(); });
-    connect(camera_.get(), &QCamera::torchModeChanged, this,
-            [this] { emit settingsChanged(); });
+  }
+
+  ~WebcamSession() override {
+#ifdef Q_OS_LINUX
+    if (v4l2Descriptor_ >= 0) {
+      close(v4l2Descriptor_);
+    }
+#endif
   }
 
   [[nodiscard]] QString backend() const override { return "webcam"; }
@@ -254,27 +310,34 @@ class WebcamSession final : public CameraSession {
       result.push_back(std::move(setting));
     }
 
-    if (camera_->supportedFeatures().testFlag(
-            QCamera::Feature::IsoSensitivity)) {
-      const int minimum = std::max(1, camera_->minimumIsoSensitivity());
-      const int maximum = camera_->maximumIsoSensitivity();
-      int value = camera_->manualIsoSensitivity();
-      if (value <= 0 && maximum >= minimum) {
-        value = std::clamp(camera_->isoSensitivity() > 0
-                               ? camera_->isoSensitivity()
-                               : 100,
-                           minimum, maximum);
-      }
-      CameraSetting setting{"iso", "ISO",
-                            QString::number(value), {}};
+#ifdef Q_OS_LINUX
+    if (const auto gain = v4l2Control(v4l2Descriptor_, V4L2_CID_GAIN)) {
+      CameraSetting setting{"gain", "Gain", QString::number(gain->value), {}};
       setting.type = CameraSettingType::IntegerRange;
-      setting.minimum = minimum;
-      setting.maximum = maximum;
-      setting.step = 1;
+      setting.minimum = gain->minimum;
+      setting.maximum = gain->maximum;
+      setting.step = gain->step;
       result.push_back(std::move(setting));
     }
 
-    if (camera_->supportedFeatures().testFlag(
+    const auto nativeExposure =
+        v4l2Control(v4l2Descriptor_, V4L2_CID_EXPOSURE_ABSOLUTE);
+    if (nativeExposure) {
+      CameraSetting setting{"exposure", "Exposure",
+                            QString::number(nativeExposure->value), {}};
+      setting.type = CameraSettingType::IntegerRange;
+      setting.minimum = nativeExposure->minimum;
+      setting.maximum = nativeExposure->maximum;
+      setting.step = nativeExposure->step;
+      result.push_back(std::move(setting));
+    }
+#endif
+
+    if (
+#ifdef Q_OS_LINUX
+        !nativeExposure &&
+#endif
+        camera_->supportedFeatures().testFlag(
             QCamera::Feature::ManualExposureTime)) {
       float exposureTime = camera_->manualExposureTime();
       if (exposureTime <= 0 && camera_->minimumExposureTime() > 0 &&
@@ -286,7 +349,7 @@ class WebcamSession final : public CameraSession {
                                   camera_->maximumExposureTime());
       }
       CameraSetting setting{
-          "exposureTime", "Shutter",
+          "exposureTime", "Exposure",
           QString::number(exposureTime, 'g', 6),
           {{"-1", "Auto"}}};
       for (const auto& [seconds, label] : std::vector<std::pair<double, QString>>{
@@ -448,35 +511,6 @@ class WebcamSession final : public CameraSession {
     }
     result.push_back(std::move(quality));
 
-    CameraSetting flash{"flashMode", "Flash",
-                        QString::number(static_cast<int>(camera_->flashMode())), {}};
-    for (const auto& [mode, label] :
-         std::array<std::pair<QCamera::FlashMode, QString>, 3>{
-             {{QCamera::FlashOff, "Off"}, {QCamera::FlashOn, "On"},
-              {QCamera::FlashAuto, "Auto"}}}) {
-      if (camera_->isFlashModeSupported(mode)) {
-        flash.choices.push_back(
-            {QString::number(static_cast<int>(mode)), label});
-      }
-    }
-    if (!flash.choices.empty()) {
-      result.push_back(std::move(flash));
-    }
-
-    CameraSetting torch{"torchMode", "Torch",
-                        QString::number(static_cast<int>(camera_->torchMode())), {}};
-    for (const auto& [mode, label] :
-         std::array<std::pair<QCamera::TorchMode, QString>, 3>{
-             {{QCamera::TorchOff, "Off"}, {QCamera::TorchOn, "On"},
-              {QCamera::TorchAuto, "Auto"}}}) {
-      if (camera_->isTorchModeSupported(mode)) {
-        torch.choices.push_back(
-            {QString::number(static_cast<int>(mode)), label});
-      }
-    }
-    if (!torch.choices.empty()) {
-      result.push_back(std::move(torch));
-    }
     return result;
   }
 
@@ -528,6 +562,14 @@ class WebcamSession final : public CameraSession {
       camera_->setFocusDistance(value.toFloat(&converted));
     } else if (id == "zoom") {
       camera_->setZoomFactor(value.toFloat(&converted));
+#ifdef Q_OS_LINUX
+    } else if (id == "gain" || id == "exposure") {
+      v4l2_control control{};
+      control.id = id == "gain" ? V4L2_CID_GAIN : V4L2_CID_EXPOSURE_ABSOLUTE;
+      control.value = value.toInt(&converted);
+      converted = converted && v4l2Descriptor_ >= 0 &&
+                  ioctl(v4l2Descriptor_, VIDIOC_S_CTRL, &control) == 0;
+#endif
     } else if (id == "videoFormat") {
       const auto formats = device_.videoFormats();
       const auto format = std::find_if(
@@ -551,12 +593,6 @@ class WebcamSession final : public CameraSession {
     } else if (id == "photoQuality") {
       capture_->setQuality(
           static_cast<QImageCapture::Quality>(value.toInt(&converted)));
-    } else if (id == "flashMode") {
-      camera_->setFlashMode(
-          static_cast<QCamera::FlashMode>(value.toInt(&converted)));
-    } else if (id == "torchMode") {
-      camera_->setTorchMode(
-          static_cast<QCamera::TorchMode>(value.toInt(&converted)));
     }
     if (!converted) {
       emit errorOccurred("The webcam rejected an invalid camera setting.");
@@ -571,6 +607,9 @@ class WebcamSession final : public CameraSession {
   std::unique_ptr<QImageCapture> capture_;
   std::unique_ptr<QVideoSink> sink_;
   QMediaCaptureSession mediaSession_;
+#ifdef Q_OS_LINUX
+  int v4l2Descriptor_ = -1;
+#endif
 };
 
 }  // namespace
