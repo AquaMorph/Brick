@@ -30,10 +30,25 @@ QString canonLabel(EdsPropertyID property, EdsInt32 value) {
       {0x38, "f/4.0"}, {0x40, "f/5.6"}, {0x48, "f/8.0"}, {0x50, "f/11"},
       {0x58, "f/16"},  {0x60, "f/22"},  {0x68, "f/32"}};
   static const std::map<EdsInt32, QString> shutter = {
-      {0x0c, "Bulb"},  {0x10, "30 s"},   {0x18, "15 s"},  {0x20, "8 s"},   {0x28, "4 s"},
-      {0x30, "2 s"},   {0x38, "1 s"},    {0x40, "1/2"},   {0x48, "1/4"},   {0x50, "1/8"},
-      {0x58, "1/15"},  {0x60, "1/30"},   {0x68, "1/60"},  {0x70, "1/125"}, {0x78, "1/250"},
-      {0x80, "1/500"}, {0x88, "1/1000"}, {0x90, "1/2000"}};
+      {0x0c, "Bulb"},   {0x10, "30 s"},   {0x13, "25 s"},   {0x14, "20 s"},
+      {0x15, "20 s"},   {0x18, "15 s"},   {0x1b, "13 s"},   {0x1c, "10 s"},
+      {0x1d, "10 s"},   {0x20, "8 s"},    {0x23, "6 s"},    {0x24, "6 s"},
+      {0x25, "5 s"},    {0x28, "4 s"},    {0x2b, "3.2 s"},  {0x2c, "3 s"},
+      {0x2d, "2.5 s"},  {0x30, "2 s"},    {0x33, "1.6 s"},  {0x34, "1.5 s"},
+      {0x35, "1.3 s"},  {0x38, "1 s"},    {0x3b, "0.8 s"},  {0x3c, "0.7 s"},
+      {0x3d, "0.6 s"},  {0x40, "1/2"},    {0x43, "0.4 s"},  {0x44, "0.3 s"},
+      {0x45, "0.3 s"},  {0x48, "1/4"},    {0x4b, "1/5"},    {0x4c, "1/6"},
+      {0x4d, "1/6"},    {0x50, "1/8"},    {0x53, "1/10"},   {0x54, "1/10"},
+      {0x55, "1/13"},   {0x58, "1/15"},   {0x5b, "1/20"},   {0x5c, "1/20"},
+      {0x5d, "1/25"},   {0x60, "1/30"},   {0x63, "1/40"},   {0x64, "1/45"},
+      {0x65, "1/50"},   {0x68, "1/60"},   {0x6b, "1/80"},   {0x6c, "1/90"},
+      {0x6d, "1/100"},  {0x70, "1/125"},  {0x73, "1/160"},  {0x74, "1/180"},
+      {0x75, "1/200"},  {0x78, "1/250"},  {0x7b, "1/320"},  {0x7c, "1/350"},
+      {0x7d, "1/400"},  {0x80, "1/500"},  {0x83, "1/640"},  {0x84, "1/750"},
+      {0x85, "1/800"},  {0x88, "1/1000"}, {0x8b, "1/1250"}, {0x8c, "1/1500"},
+      {0x8d, "1/1600"}, {0x90, "1/2000"}, {0x93, "1/2500"}, {0x94, "1/3000"},
+      {0x95, "1/3200"}, {0x98, "1/4000"}, {0x9b, "1/5000"}, {0x9c, "1/6000"},
+      {0x9d, "1/6400"}, {0xa0, "1/8000"}};
   static const std::map<EdsInt32, QString> whiteBalance = {
       {0, "Auto"},        {1, "Daylight"}, {2, "Cloudy"}, {3, "Tungsten"},
       {4, "Fluorescent"}, {5, "Flash"},    {8, "Shade"},  {9, "Color temperature"}};
@@ -219,6 +234,12 @@ class CanonSession final : public CameraSession {
       for (int index = 0; index < descriptor.numElements; ++index) {
         const EdsInt32 value = descriptor.propDesc[index];
         setting.choices.push_back({hexValue(value), canonLabel(property.id, value)});
+      }
+      if (property.id == kEdsPropID_Tv) {
+        std::ranges::sort(setting.choices, [](const CameraSettingChoice& left,
+                                              const CameraSettingChoice& right) {
+          return left.value.toUInt(nullptr, 16) > right.value.toUInt(nullptr, 16);
+        });
       }
       result.push_back(std::move(setting));
     }
