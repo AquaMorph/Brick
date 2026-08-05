@@ -350,7 +350,7 @@ void CinematographyWidget::rebuildSettings() {
       auto* slider = new QSlider(Qt::Horizontal, control);
       auto* valueLabel = new QLabel(control);
       slider->setRange(0, static_cast<int>(setting.choices.size()) - 1);
-      slider->setTracking(false);
+      slider->setTracking(true);
       slider->setTickInterval(1);
       slider->setTickPosition(QSlider::TicksBelow);
       valueLabel->setMinimumWidth(62);
@@ -395,7 +395,7 @@ void CinematographyWidget::rebuildSettings() {
       const double range = setting.maximum - setting.minimum;
       const int sliderSteps = std::max(1, static_cast<int>(std::round(range / setting.step)));
       slider->setRange(0, sliderSteps);
-      slider->setTracking(false);
+      slider->setTracking(true);
       spin->setRange(setting.minimum, setting.maximum);
       spin->setSingleStep(setting.step);
       spin->setDecimals(setting.decimals);
