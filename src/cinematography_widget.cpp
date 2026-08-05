@@ -9,6 +9,7 @@
 #include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QImageReader>
 #include <QLabel>
 #include <QListWidget>
 #include <QMessageBox>
@@ -26,6 +27,16 @@
 #include <cmath>
 
 namespace {
+
+QImage loadScaledImage(const QString& filePath, const QSize& targetSize) {
+  QImageReader reader(filePath);
+  const QSize sourceSize = reader.size();
+  if (sourceSize.isValid() && targetSize.isValid() &&
+      (sourceSize.width() > targetSize.width() || sourceSize.height() > targetSize.height())) {
+    reader.setScaledSize(sourceSize.scaled(targetSize, Qt::KeepAspectRatio));
+  }
+  return reader.read();
+}
 
 class DoubleClickResetSlider final : public QSlider {
  public:
@@ -611,10 +622,9 @@ void CinematographyWidget::refreshGallery(const QString& selectedFileName) {
   testShots_ = project_->testShots(sceneIndex_, shotIndex_, &error);
   for (int index = 0; index < static_cast<int>(testShots_.size()); ++index) {
     const TestShot& shot = testShots_[index];
-    QPixmap thumbnail(shot.filePath);
-    auto* item = new QListWidgetItem(
-        QIcon(thumbnail.scaled(128, 82, Qt::KeepAspectRatio, Qt::SmoothTransformation)),
-        shot.fileName, gallery_);
+    const QImage thumbnail = loadScaledImage(shot.filePath, {128, 82});
+    auto* item =
+        new QListWidgetItem(QIcon(QPixmap::fromImage(thumbnail)), shot.fileName, gallery_);
     if (shot.fileName == selectedFileName) {
       gallery_->setCurrentItem(item);
     }
@@ -637,7 +647,7 @@ void CinematographyWidget::showTestShot(int row) {
   }
   setLivePreview(false);
   const TestShot& shot = testShots_[row];
-  const QImage image(shot.filePath);
+  const QImage image = loadScaledImage(shot.filePath, previewLabel_->size());
   updatePreview(image, image.isNull() ? "Could not load image" : QString{});
 
   QStringList metadata = {"<b>" + shot.fileName.toHtmlEscaped() + "</b>",
