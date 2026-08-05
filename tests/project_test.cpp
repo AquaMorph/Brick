@@ -205,9 +205,26 @@ int main(int argc, char* argv[]) {
                        QFile::exists(firstTestShot->filePath),
                    "The first test shot was not imported and numbered.");
   passed &= expect(secondTestShot.has_value() &&
-                       secondTestShot->fileName == "000002.png" &&
-                       QFile::exists(secondTestShot->filePath),
-                   "The second test shot was not imported and numbered.");
+                        secondTestShot->fileName == "000002.png" &&
+                        QFile::exists(secondTestShot->filePath),
+                    "The second test shot was not imported and numbered.");
+  const QString firstMetadataPath =
+      QDir(wideShotPath).filePath("tests/000001.conf");
+  passed &= expect(QFile::exists(firstMetadataPath),
+                    "The first test shot metadata sidecar was not created.");
+  {
+    QSettings metadata(firstMetadataPath, QSettings::IniFormat);
+    QSettings shotConfig(QDir(wideShotPath).filePath("shot.conf"),
+                         QSettings::IniFormat);
+    passed &= expect(
+        metadata.value("TestShot/formatVersion").toInt() == 1 &&
+            metadata.value("TestShot/fileName").toString() == "000001.jpg" &&
+            metadata.value("TestShot/cameraBackend").toString() ==
+                camera.backend,
+        "The test shot metadata sidecar has incorrect contents.");
+    passed &= expect(!shotConfig.childGroups().contains("TestShots"),
+                     "Test shot metadata was written to shot.conf.");
+  }
   auto restoredTestShots = created->testShots(0, 0, &error);
   passed &= expect(
       restoredTestShots.size() == 2 &&
@@ -225,10 +242,11 @@ int main(int argc, char* argv[]) {
                    "Test shot deletion accepted an invalid file name.");
   restoredTestShots = created->testShots(0, 0, &error);
   passed &= expect(restoredTestShots.size() == 1 &&
-                       restoredTestShots[0].fileName == "000002.png" &&
-                       !QFile::exists(QDir(wideShotPath).filePath(
-                           "tests/000001.jpg")),
-                   "Test shot deletion did not remove its image and metadata.");
+                        restoredTestShots[0].fileName == "000002.png" &&
+                        !QFile::exists(QDir(wideShotPath).filePath(
+                            "tests/000001.jpg")) &&
+                        !QFile::exists(firstMetadataPath),
+                    "Test shot deletion did not remove its image and metadata.");
   const auto thirdTestShot = created->importTestShot(
       0, 0, sourceOne, firstCapture, "Canon EOS Test", camera,
       firstSettings, firstSettings, &error);

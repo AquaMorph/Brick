@@ -18,6 +18,7 @@ constexpr int kProjectFormatVersion = 1;
 constexpr int kSceneFormatVersion = 1;
 constexpr int kShotFormatVersion = 1;
 constexpr int kTakeFormatVersion = 1;
+constexpr int kTestShotFormatVersion = 1;
 constexpr auto kConfigFileName = "project.conf";
 constexpr auto kSceneConfigFileName = "scene.conf";
 constexpr auto kShotConfigFileName = "shot.conf";
@@ -91,6 +92,10 @@ int testShotNumber(const QString& fileName) {
       R"(^(\d{6})\.[^./\\]+$)");
   const auto match = numberedImage.match(fileName);
   return match.hasMatch() ? match.captured(1).toInt() : 0;
+}
+
+QString testShotMetadataFileName(int number) {
+  return QString("%1.conf").arg(number, 6, 10, QLatin1Char('0'));
 }
 
 QString resolveTestsDirectory(QDir shot, bool create, QString* error) {
@@ -498,38 +503,37 @@ std::vector<TestShot> Project::testShots(int sceneIndex, int shotIndex,
   if (directory.isEmpty()) {
     return {};
   }
-  const QString shotPath = shotDirectory(sceneIndex, shotIndex, error);
-  QSettings config(QDir(shotPath).filePath(kShotConfigFileName),
-                   QSettings::IniFormat);
-  config.beginGroup("TestShots");
-  QStringList groups = config.childGroups();
-  groups.sort();
+
+  const QStringList metadataFiles = QDir(directory).entryList(
+      {"??????.conf"}, QDir::Files | QDir::NoDotAndDotDot, QDir::Name);
 
   std::vector<TestShot> shots;
-  shots.reserve(groups.size());
-  for (const QString& group : groups) {
-    config.beginGroup(group);
+  shots.reserve(metadataFiles.size());
+  for (const QString& metadataFile : metadataFiles) {
+    QSettings config(QDir(directory).filePath(metadataFile),
+                     QSettings::IniFormat);
     TestShot shot;
-    shot.fileName = config.value("fileName").toString();
+    shot.fileName = config.value("TestShot/fileName").toString();
     shot.capturedUtc = QDateTime::fromString(
-        config.value("capturedUtc").toString(), Qt::ISODate);
-    shot.cameraDisplayName = config.value("cameraDisplayName").toString();
-    shot.cameraBackend = config.value("cameraBackend").toString();
-    shot.cameraDeviceId = config.value("cameraDeviceId").toString();
+        config.value("TestShot/capturedUtc").toString(), Qt::ISODate);
+    shot.cameraDisplayName =
+        config.value("TestShot/cameraDisplayName").toString();
+    shot.cameraBackend = config.value("TestShot/cameraBackend").toString();
+    shot.cameraDeviceId = config.value("TestShot/cameraDeviceId").toString();
     shot.capturedSettings = readStringMap(config, "Settings");
     shot.displaySettings = readStringMap(config, "DisplaySettings");
-    config.endGroup();
-    if (testShotNumber(shot.fileName) != group.toInt() ||
+    if (config.status() != QSettings::NoError) {
+      setError(error, "Brick could not read test shot metadata.");
+      return {};
+    }
+    if (config.value("TestShot/formatVersion").toInt() !=
+            kTestShotFormatVersion ||
+        testShotNumber(shot.fileName) != testShotNumber(metadataFile) ||
         !QFileInfo::exists(QDir(directory).filePath(shot.fileName))) {
       continue;
     }
     shot.filePath = QDir(directory).filePath(shot.fileName);
     shots.push_back(std::move(shot));
-  }
-  config.endGroup();
-  if (config.status() != QSettings::NoError) {
-    setError(error, "Brick could not read test shots from shot.conf.");
-    return {};
   }
   return shots;
 }
@@ -602,8 +606,7 @@ std::optional<TestShot> Project::importTestShot(
   }
 
   const QString directory = testShotDirectory(sceneIndex, shotIndex, error);
-  const QString shotPath = shotDirectory(sceneIndex, shotIndex, error);
-  if (directory.isEmpty() || shotPath.isEmpty()) {
+  if (directory.isEmpty()) {
     return std::nullopt;
   }
 
@@ -613,13 +616,6 @@ std::optional<TestShot> Project::importTestShot(
   for (const QString& file : files) {
     largestNumber = std::max(largestNumber, testShotNumber(file));
   }
-  QSettings config(QDir(shotPath).filePath(kShotConfigFileName),
-                   QSettings::IniFormat);
-  config.beginGroup("TestShots");
-  for (const QString& group : config.childGroups()) {
-    largestNumber = std::max(largestNumber, group.toInt());
-  }
-  config.endGroup();
   if (largestNumber >= 999999) {
     setError(error, "A shot cannot contain more test shot numbers.");
     return std::nullopt;
@@ -634,19 +630,23 @@ std::optional<TestShot> Project::importTestShot(
     return std::nullopt;
   }
 
-  const QString metadataGroup = "TestShots/" + group;
-  config.setValue(metadataGroup + "/fileName", fileName);
-  config.setValue(metadataGroup + "/capturedUtc",
-                  capturedUtc.toUTC().toString(Qt::ISODateWithMs));
-  config.setValue(metadataGroup + "/cameraDisplayName", cameraDisplayName);
-  config.setValue(metadataGroup + "/cameraBackend", camera.backend);
-  config.setValue(metadataGroup + "/cameraDeviceId", camera.deviceId);
-  writeStringMap(config, metadataGroup + "/Settings", capturedSettings);
-  writeStringMap(config, metadataGroup + "/DisplaySettings", displaySettings);
-  config.sync();
-  if (config.status() != QSettings::NoError) {
+  const QString metadataPath =
+      QDir(directory).filePath(testShotMetadataFileName(number));
+  QSettings metadata(metadataPath, QSettings::IniFormat);
+  metadata.setValue("TestShot/formatVersion", kTestShotFormatVersion);
+  metadata.setValue("TestShot/fileName", fileName);
+  metadata.setValue("TestShot/capturedUtc",
+                   capturedUtc.toUTC().toString(Qt::ISODateWithMs));
+  metadata.setValue("TestShot/cameraDisplayName", cameraDisplayName);
+  metadata.setValue("TestShot/cameraBackend", camera.backend);
+  metadata.setValue("TestShot/cameraDeviceId", camera.deviceId);
+  writeStringMap(metadata, "Settings", capturedSettings);
+  writeStringMap(metadata, "DisplaySettings", displaySettings);
+  metadata.sync();
+  if (metadata.status() != QSettings::NoError) {
     QFile::remove(destination);
-    setError(error, "Brick could not save test shot metadata in shot.conf.");
+    QFile::remove(metadataPath);
+    setError(error, "Brick could not save test shot metadata.");
     return std::nullopt;
   }
 
@@ -660,43 +660,41 @@ bool Project::deleteTestShot(int sceneIndex, int shotIndex,
                              const QString& fileName, QString* error) {
   const int number = testShotNumber(fileName);
   const QString directory = testShotDirectory(sceneIndex, shotIndex, error);
-  const QString shotPath = shotDirectory(sceneIndex, shotIndex, error);
-  if (number == 0 || directory.isEmpty() || shotPath.isEmpty()) {
+  if (number == 0 || directory.isEmpty()) {
     if (number == 0) {
       setError(error, "The selected test shot does not exist.");
     }
     return false;
   }
 
-  const QString group = QString("%1").arg(number, 6, 10, QLatin1Char('0'));
-  QSettings config(QDir(shotPath).filePath(kShotConfigFileName),
-                   QSettings::IniFormat);
-  const QString metadataGroup = "TestShots/" + group;
-  if (config.value(metadataGroup + "/fileName").toString() != fileName ||
+  const QString metadataFile = testShotMetadataFileName(number);
+  QSettings metadata(QDir(directory).filePath(metadataFile),
+                     QSettings::IniFormat);
+  if (metadata.value("TestShot/formatVersion").toInt() !=
+          kTestShotFormatVersion ||
+      metadata.value("TestShot/fileName").toString() != fileName ||
       !QFileInfo::exists(QDir(directory).filePath(fileName))) {
     setError(error, "The selected test shot does not exist.");
     return false;
   }
 
   QDir tests(directory);
-  const QString tombstone =
+  const QString imageTombstone =
       ".brick-test-delete-" + QUuid::createUuid().toString(QUuid::Id128);
-  if (!tests.rename(fileName, tombstone)) {
+  const QString metadataTombstone = imageTombstone + ".conf";
+  if (!tests.rename(fileName, imageTombstone)) {
     setError(error, "Brick could not prepare the test shot for deletion.");
     return false;
   }
-  config.remove(metadataGroup);
-  config.sync();
-  if (config.status() != QSettings::NoError) {
-    tests.rename(tombstone, fileName);
-    setError(error, "Brick could not remove test shot metadata from shot.conf.");
+  if (!tests.rename(metadataFile, metadataTombstone)) {
+    tests.rename(imageTombstone, fileName);
+    setError(error, "Brick could not prepare test shot metadata for deletion.");
     return false;
   }
-  if (!tests.remove(tombstone)) {
-    // Metadata removal is the commit point. A hidden tombstone can be cleaned
-    // up later without making a successfully deleted image reappear.
-    return true;
-  }
+  // Renaming both files is the commit point. Hidden tombstones can be cleaned
+  // up later without making a successfully deleted test shot reappear.
+  tests.remove(imageTombstone);
+  tests.remove(metadataTombstone);
   return true;
 }
 
