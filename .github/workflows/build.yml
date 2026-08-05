@@ -26,6 +26,7 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: "6.9.2"
+          modules: qtmultimedia
           cache: true
 
       - name: Configure
