@@ -73,8 +73,27 @@ QString canonLabel(EdsPropertyID property, EdsInt32 value) {
       {0x95, "1/3200"}, {0x98, "1/4000"}, {0x9b, "1/5000"}, {0x9c, "1/6000"},
       {0x9d, "1/6400"}, {0xa0, "1/8000"}};
   static const std::map<EdsInt32, QString> whiteBalance = {
-      {0, "Auto"},        {1, "Daylight"}, {2, "Cloudy"}, {3, "Tungsten"},
-      {4, "Fluorescent"}, {5, "Flash"},    {8, "Shade"},  {9, "Color temperature"}};
+      {kEdsWhiteBalance_Auto, "Auto"},
+      {kEdsWhiteBalance_Daylight, "Daylight"},
+      {kEdsWhiteBalance_Cloudy, "Cloudy"},
+      {kEdsWhiteBalance_Tungsten, "Tungsten"},
+      {kEdsWhiteBalance_Fluorescent, "Fluorescent"},
+      {kEdsWhiteBalance_Strobe, "Flash"},
+      {kEdsWhiteBalance_WhitePaper, "Custom 1"},
+      {kEdsWhiteBalance_Shade, "Shade"},
+      {kEdsWhiteBalance_ColorTemp, "Manual"},
+      {kEdsWhiteBalance_PCSet1, "PC set 1"},
+      {kEdsWhiteBalance_PCSet2, "PC set 2"},
+      {kEdsWhiteBalance_PCSet3, "PC set 3"},
+      {kEdsWhiteBalance_WhitePaper2, "Custom 2"},
+      {kEdsWhiteBalance_WhitePaper3, "Custom 3"},
+      {kEdsWhiteBalance_WhitePaper4, "Custom 4"},
+      {kEdsWhiteBalance_WhitePaper5, "Custom 5"},
+      {kEdsWhiteBalance_PCSet4, "PC set 4"},
+      {kEdsWhiteBalance_PCSet5, "PC set 5"},
+      {kEdsWhiteBalance_AwbWhite, "Auto (white priority)"},
+      {kEdsWhiteBalance_Click, "Click white balance"},
+      {kEdsWhiteBalance_Pasted, "Pasted white balance"}};
   static const std::map<EdsInt32, QString> pictureStyle = {
       {kEdsPictureStyle_Standard, "Standard"},   {kEdsPictureStyle_Portrait, "Portrait"},
       {kEdsPictureStyle_Landscape, "Landscape"}, {kEdsPictureStyle_Neutral, "Neutral"},
@@ -183,6 +202,9 @@ QString canonLabel(EdsPropertyID property, EdsInt32 value) {
     const int signedValue = value > 0x80 ? value - 0x100 : value;
     return QString::number(signedValue / 8.0, 'g', 2) + " EV";
   }
+  if (property == kEdsPropID_ColorTemperature) {
+    return QString::number(value) + " K";
+  }
   return "0x" + hexValue(value).rightJustified(2, '0');
 }
 
@@ -194,7 +216,7 @@ struct CanonProperty {
   const char* group = "Capture";
 };
 
-constexpr std::array<CanonProperty, 10> kCanonProperties = {{
+constexpr std::array<CanonProperty, 11> kCanonProperties = {{
     {kEdsPropID_AEModeSelect, "aeMode", "Exposure mode"},
     {kEdsPropID_Tv, "shutter", "Shutter speed", CameraSettingType::SteppedChoice},
     {kEdsPropID_Av, "aperture", "Aperture", CameraSettingType::SteppedChoice},
@@ -202,6 +224,8 @@ constexpr std::array<CanonProperty, 10> kCanonProperties = {{
     {kEdsPropID_ExposureCompensation, "exposureCompensation", "Exposure compensation",
      CameraSettingType::SteppedChoice},
     {kEdsPropID_WhiteBalance, "whiteBalance", "White balance"},
+    {kEdsPropID_ColorTemperature, "colorTemperature", "Color temperature",
+     CameraSettingType::SteppedChoice},
     {kEdsPropID_PictureStyle, "pictureStyle", "Picture style"},
     {kEdsPropID_ImageQuality, "imageQuality", "Image quality"},
     {kEdsPropID_MeteringMode, "meteringMode", "Metering"},
@@ -289,6 +313,13 @@ class CanonSession final : public CameraSession {
         }
         setting.value = hexValue(static_cast<EdsInt32>(manualIsoValue_));
         setting.enabled = !automatic;
+      }
+      if (property.id == kEdsPropID_ColorTemperature) {
+        EdsInt32 whiteBalance = kEdsWhiteBalance_Auto;
+        setting.enabled =
+            EdsGetPropertyData(camera_, kEdsPropID_WhiteBalance, 0, sizeof(whiteBalance),
+                               &whiteBalance) == EDS_ERR_OK &&
+            whiteBalance == kEdsWhiteBalance_ColorTemp;
       }
       if (property.id == kEdsPropID_Tv) {
         std::ranges::sort(setting.choices, [](const CameraSettingChoice& left,
