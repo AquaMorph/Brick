@@ -309,6 +309,22 @@ QString canonLabel(EdsPropertyID property, EdsInt32 value) {
       {EdsImageQuality_Unknown, "Unknown"}};
   static const std::map<EdsInt32, QString> metering = {
       {1, "Spot"}, {3, "Evaluative"}, {4, "Partial"}, {5, "Center-weighted"}};
+  static const std::map<EdsInt32, QString> driveMode = {
+      {0x00, "Single-frame shooting"},
+      {0x01, "Continuous shooting"},
+      {0x02, "Video"},
+      {0x03, "Not used"},
+      {0x04, "High-speed continuous shooting"},
+      {0x05, "Low-speed continuous shooting"},
+      {0x06, "Single silent shooting"},
+      {0x07, "10-second self-timer + continuous shooting"},
+      {0x10, "10-second self-timer"},
+      {0x11, "2-second self-timer"},
+      {0x12, "Super high-speed continuous shooting"},
+      {0x13, "Silent single shooting"},
+      {0x14, "Silent continuous shooting"},
+      {0x15, "Silent high-speed continuous shooting"},
+      {0x16, "Silent low-speed continuous shooting"}};
   const std::map<EdsInt32, QString>* values = nullptr;
   if (property == kEdsPropID_ISOSpeed) {
     values = &iso;
@@ -326,6 +342,8 @@ QString canonLabel(EdsPropertyID property, EdsInt32 value) {
     values = &pictureStyle;
   } else if (property == kEdsPropID_MeteringMode) {
     values = &metering;
+  } else if (property == kEdsPropID_DriveMode) {
+    values = &driveMode;
   }
   if (values != nullptr) {
     const auto match = values->find(value);
