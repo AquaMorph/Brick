@@ -248,11 +248,40 @@ class CanonSession final : public CameraSession {
       emit errorOccurred(initializationError_);
       return;
     }
+    if (depthOfFieldPreview_) {
+      const EdsError previewError = setDepthOfFieldPreview(false);
+      if (previewError != EDS_ERR_OK) {
+        emit errorOccurred("Could not release Canon depth of field preview for capture: " +
+                           errorText(previewError));
+        return;
+      }
+      restoreDepthOfFieldPreviewAfterCapture_ = true;
+      emit settingsChanged();
+    }
     pendingCaptureBase_ = destinationBase;
-    const EdsError error = EdsSendCommand(camera_, kEdsCameraCommand_TakePicture, 0);
+    pendingCaptureWarning_.clear();
+    EdsError error = EDS_ERR_OK;
+    if (restoreDepthOfFieldPreviewAfterCapture_) {
+      error = EdsSendCommand(camera_, kEdsCameraCommand_PressShutterButton,
+                             kEdsCameraCommand_ShutterButton_Completely_NonAF);
+      const EdsError releaseError = EdsSendCommand(
+          camera_, kEdsCameraCommand_PressShutterButton, kEdsCameraCommand_ShutterButton_OFF);
+      if (error == EDS_ERR_OK && releaseError != EDS_ERR_OK) {
+        pendingCaptureWarning_ =
+            "Canon could not release the shutter button: " + errorText(releaseError);
+      }
+    } else {
+      error = EdsSendCommand(camera_, kEdsCameraCommand_TakePicture, 0);
+    }
     if (error != EDS_ERR_OK) {
       pendingCaptureBase_.clear();
-      emit errorOccurred("Canon capture failed: " + errorText(error));
+      pendingCaptureWarning_.clear();
+      const EdsError previewError = restoreDepthOfFieldPreview();
+      QString message = "Canon capture failed: " + errorText(error);
+      if (previewError != EDS_ERR_OK) {
+        message += ". Could not restore depth of field preview: " + errorText(previewError);
+      }
+      emit errorOccurred(message);
     }
   }
 
@@ -279,14 +308,11 @@ class CanonSession final : public CameraSession {
       return;
     }
     if (id == "depthOfFieldPreview") {
-      const EdsUInt32 enabled = value == "1" ? 1 : 0;
-      const EdsError error = EdsSetPropertyData(camera_, kEdsPropID_Evf_DepthOfFieldPreview, 0,
-                                                sizeof(enabled), &enabled);
+      const EdsError error = setDepthOfFieldPreview(value == "1");
       if (error != EDS_ERR_OK) {
         emit errorOccurred("Canon rejected depth of field preview: " + errorText(error));
         return;
       }
-      depthOfFieldPreview_ = enabled != 0;
       emit settingsChanged();
       return;
     }
@@ -309,6 +335,27 @@ class CanonSession final : public CameraSession {
   }
 
  private:
+  EdsError setDepthOfFieldPreview(bool enabled) {
+    const EdsUInt32 value = enabled ? kEdsEvfDepthOfFieldPreview_ON
+                                    : kEdsEvfDepthOfFieldPreview_OFF;
+    const EdsError error = EdsSetPropertyData(
+        camera_, kEdsPropID_Evf_DepthOfFieldPreview, 0, sizeof(value), &value);
+    if (error == EDS_ERR_OK) {
+      depthOfFieldPreview_ = enabled;
+    }
+    return error;
+  }
+
+  EdsError restoreDepthOfFieldPreview() {
+    if (!restoreDepthOfFieldPreviewAfterCapture_) {
+      return EDS_ERR_OK;
+    }
+    restoreDepthOfFieldPreviewAfterCapture_ = false;
+    const EdsError error = setDepthOfFieldPreview(true);
+    emit settingsChanged();
+    return error;
+  }
+
   static EdsError EDSCALLBACK objectEvent(EdsObjectEvent event, EdsBaseRef ref, EdsVoid* context) {
     auto* self = static_cast<CanonSession*>(context);
     if (event == kEdsObjectEvent_DirItemRequestTransfer && ref != nullptr) {
@@ -463,11 +510,21 @@ class CanonSession final : public CameraSession {
       EdsRelease(stream);
     }
     pendingCaptureBase_.clear();
+    const QString warning = std::move(pendingCaptureWarning_);
+    pendingCaptureWarning_.clear();
+    const EdsError previewError = restoreDepthOfFieldPreview();
     if (error == EDS_ERR_OK) {
       emit captureCompleted(filePath);
     } else {
       QFile::remove(filePath);
       emit errorOccurred("Could not download the Canon image: " + errorText(error));
+    }
+    if (previewError != EDS_ERR_OK) {
+      emit errorOccurred("Could not restore Canon depth of field preview: " +
+                         errorText(previewError));
+    }
+    if (!warning.isEmpty()) {
+      emit errorOccurred(warning);
     }
   }
 
@@ -476,10 +533,12 @@ class CanonSession final : public CameraSession {
   QTimer pollTimer_;
   QString initializationError_;
   QString pendingCaptureBase_;
+  QString pendingCaptureWarning_;
   bool sdkInitialized_ = false;
   bool sessionOpen_ = false;
   bool liveViewStarted_ = false;
   mutable bool depthOfFieldPreview_ = false;
+  bool restoreDepthOfFieldPreviewAfterCapture_ = false;
   bool externalFlash_ = false;
   bool lvSimulation_ = true;
   double exposurePreviewOffset_ = 0.0;
