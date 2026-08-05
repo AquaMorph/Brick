@@ -81,6 +81,40 @@ int main(int argc, char* argv[]) {
       color: #f2f2f2;
     }
 
+    QSlider::groove:horizontal {
+      height: 4px;
+      border-radius: 2px;
+      background-color: #454545;
+    }
+
+    QSlider::sub-page:horizontal {
+      border-radius: 2px;
+      background-color: #8f3028;
+    }
+
+    QSlider::handle:horizontal {
+      width: 20px;
+      margin: -8px 0;
+      border: 1px solid #777777;
+      border-radius: 5px;
+      background-color: #d0d0d0;
+    }
+
+    QSlider::handle:horizontal:hover,
+    QSlider::handle:horizontal:focus {
+      border-color: #b3473c;
+      background-color: #eeeeee;
+    }
+
+    QSlider::handle:horizontal:pressed {
+      border-color: #c75a4e;
+      background-color: #b3473c;
+    }
+
+    QSlider:horizontal {
+      min-height: 32px;
+    }
+
     QTabBar {
       background-color: #111111;
     }
