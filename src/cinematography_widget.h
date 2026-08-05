@@ -39,7 +39,9 @@ class CinematographyWidget : public QWidget {
 
   void refreshCameras();
   void selectCamera(int index);
+  void refreshSettings();
   void rebuildSettings();
+  void applyCameraSetting(const QString& id, const QString& value);
   void saveCameraSettings();
   void restoreShotSettings();
   void capture();

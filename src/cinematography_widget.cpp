@@ -37,6 +37,43 @@ QString choiceLabel(const CameraSetting& setting, const QString& value) {
   return choice == setting.choices.end() ? value : choice->label;
 }
 
+bool sameSettingControls(const std::vector<CameraSetting>& left,
+                         const std::vector<CameraSetting>& right) {
+  if (left.size() != right.size()) {
+    return false;
+  }
+  for (std::size_t index = 0; index < left.size(); ++index) {
+    const CameraSetting& a = left[index];
+    const CameraSetting& b = right[index];
+    if (a.id != b.id || a.label != b.label || a.type != b.type ||
+        a.minimum != b.minimum || a.maximum != b.maximum || a.step != b.step ||
+        a.decimals != b.decimals || a.suffix != b.suffix || a.group != b.group ||
+        a.enabled != b.enabled || a.choices.size() != b.choices.size()) {
+      return false;
+    }
+    for (std::size_t choiceIndex = 0; choiceIndex < a.choices.size(); ++choiceIndex) {
+      if (a.choices[choiceIndex].value != b.choices[choiceIndex].value ||
+          a.choices[choiceIndex].label != b.choices[choiceIndex].label) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool sameSettings(const std::vector<CameraSetting>& left,
+                  const std::vector<CameraSetting>& right) {
+  if (!sameSettingControls(left, right)) {
+    return false;
+  }
+  for (std::size_t index = 0; index < left.size(); ++index) {
+    if (left[index].value != right[index].value) {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 CinematographyWidget::CinematographyWidget(QWidget* parent) : QWidget(parent) {
@@ -236,7 +273,7 @@ void CinematographyWidget::selectCamera(int index) {
     }
   });
   connect(camera_.get(), &CameraSession::settingsChanged, this,
-          [this] { QTimer::singleShot(0, this, [this] { rebuildSettings(); }); });
+          [this] { QTimer::singleShot(0, this, [this] { refreshSettings(); }); });
   connect(camera_.get(), &CameraSession::captureCompleted, this,
           [this](const QString& path) { importCapture(path); });
   connect(camera_.get(), &CameraSession::errorOccurred, this,
@@ -254,6 +291,14 @@ void CinematographyWidget::selectCamera(int index) {
   liveButton_->setEnabled(true);
   rebuildSettings();
   saveCameraSettings();
+}
+
+void CinematographyWidget::refreshSettings() {
+  const auto updated = camera_ ? camera_->settings() : std::vector<CameraSetting>{};
+  if (sameSettings(settings_, updated)) {
+    return;
+  }
+  rebuildSettings();
 }
 
 void CinematographyWidget::rebuildSettings() {
@@ -290,8 +335,7 @@ void CinematographyWidget::rebuildSettings() {
           current->value = value;
         }
         if (camera_) {
-          camera_->setSetting(id, value);
-          saveCameraSettings();
+          applyCameraSetting(id, value);
         }
       });
       settingsLayout_->addRow(setting.label + ':', toggle);
@@ -330,12 +374,11 @@ void CinematographyWidget::rebuildSettings() {
                 const auto current = std::find_if(
                     settings_.begin(), settings_.end(),
                     [&id](const CameraSetting& candidate) { return candidate.id == id; });
-                if (current != settings_.end()) {
-                  current->value = choice.value;
+                 if (current != settings_.end()) {
+                   current->value = choice.value;
                 }
                 if (camera_) {
-                  camera_->setSetting(id, choice.value);
-                  saveCameraSettings();
+                  applyCameraSetting(id, choice.value);
                 }
               });
       settingsLayout_->addRow(setting.label + ':', control);
@@ -376,8 +419,7 @@ void CinematographyWidget::rebuildSettings() {
           return;
         }
         current->value = QString::number(spin->value(), 'f', current->decimals);
-        camera_->setSetting(id, current->value);
-        saveCameraSettings();
+        applyCameraSetting(id, current->value);
       };
       connect(slider, &QSlider::valueChanged, this,
               [spin, minimum = setting.minimum, range, sliderSteps, applyValue](int position) {
@@ -412,12 +454,26 @@ void CinematographyWidget::rebuildSettings() {
         if (current != settings_.end()) {
           current->value = value;
         }
-        camera_->setSetting(id, value);
-        saveCameraSettings();
+        applyCameraSetting(id, value);
       }
     });
     settingsLayout_->addRow(setting.label + ':', combo);
   }
+}
+
+void CinematographyWidget::applyCameraSetting(const QString& id, const QString& value) {
+  if (camera_ == nullptr) {
+    return;
+  }
+  const auto previous = settings_;
+  camera_->setSetting(id, value);
+  auto updated = camera_->settings();
+  const bool controlsChanged = !sameSettingControls(previous, updated);
+  settings_ = std::move(updated);
+  if (controlsChanged) {
+    QTimer::singleShot(0, this, [this] { rebuildSettings(); });
+  }
+  saveCameraSettings();
 }
 
 void CinematographyWidget::saveCameraSettings() {
