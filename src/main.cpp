@@ -52,6 +52,10 @@ int main(int argc, char* argv[]) {
       color: #777777;
     }
 
+    QLabel#cameraPreview[live="true"] {
+      border-color: #67221d;
+    }
+
     QLabel#cinematographyShotLabel,
     QLabel#cameraStatus {
       color: #999999;

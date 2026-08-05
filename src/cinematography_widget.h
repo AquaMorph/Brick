@@ -49,6 +49,7 @@ class CinematographyWidget : public QWidget {
   void refreshGallery(const QString& selectedFileName = {});
   void showTestShot(int row);
   void showLiveView();
+  void setLivePreview(bool live);
   void deleteSelectedTestShot();
   void restoreSelectedTestShotSettings();
   [[nodiscard]] ShotCameraSettings currentCameraSettings() const;

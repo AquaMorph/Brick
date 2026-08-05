@@ -19,6 +19,7 @@
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSlider>
+#include <QStyle>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -273,6 +274,7 @@ void CinematographyWidget::selectCamera(int index) {
     rebuildSettings();
     captureButton_->setEnabled(false);
     liveButton_->setEnabled(false);
+    setLivePreview(false);
     statusLabel_->setText(devices_.empty() ? "No cameras found" : "Camera off");
     updatePreview({}, "Connect or select a camera");
     return;
@@ -307,6 +309,7 @@ void CinematographyWidget::selectCamera(int index) {
   liveButton_->setEnabled(true);
   rebuildSettings();
   saveCameraSettings();
+  showLiveView();
 }
 
 void CinematographyWidget::refreshSettings() {
@@ -632,6 +635,7 @@ void CinematographyWidget::showTestShot(int row) {
     deleteButton_->setEnabled(false);
     return;
   }
+  setLivePreview(false);
   const TestShot& shot = testShots_[row];
   const QImage image(shot.filePath);
   updatePreview(image, image.isNull() ? "Could not load image" : QString{});
@@ -648,11 +652,18 @@ void CinematographyWidget::showTestShot(int row) {
 }
 
 void CinematographyWidget::showLiveView() {
+  setLivePreview(true);
   gallery_->clearSelection();
   gallery_->setCurrentRow(-1);
   metadataLabel_->setText("Live camera settings are shown above.");
   restoreButton_->setEnabled(false);
   deleteButton_->setEnabled(false);
+}
+
+void CinematographyWidget::setLivePreview(bool live) {
+  previewLabel_->setProperty("live", live);
+  previewLabel_->style()->unpolish(previewLabel_);
+  previewLabel_->style()->polish(previewLabel_);
 }
 
 void CinematographyWidget::deleteSelectedTestShot() {
