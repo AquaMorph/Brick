@@ -198,17 +198,8 @@ class WebcamSession final : public CameraSession {
 
     const auto features = camera_->supportedFeatures();
     if (camera_->isExposureModeSupported(QCamera::ExposureManual)) {
-      int iso = camera_->isoSensitivity();
       float exposureTime = camera_->exposureTime();
       camera_->setExposureMode(QCamera::ExposureManual);
-      if (features.testFlag(QCamera::Feature::IsoSensitivity) &&
-          camera_->minimumIsoSensitivity() > 0 &&
-          camera_->maximumIsoSensitivity() >= camera_->minimumIsoSensitivity()) {
-        iso = std::clamp(iso > 0 ? iso : 100,
-                         camera_->minimumIsoSensitivity(),
-                         camera_->maximumIsoSensitivity());
-        camera_->setManualIsoSensitivity(iso);
-      }
       if (features.testFlag(QCamera::Feature::ManualExposureTime) &&
           camera_->minimumExposureTime() > 0 &&
           camera_->maximumExposureTime() >= camera_->minimumExposureTime()) {
@@ -252,8 +243,6 @@ class WebcamSession final : public CameraSession {
             &CameraSession::settingsChanged);
     connect(camera_.get(), &QCamera::cameraFormatChanged, this,
             &CameraSession::settingsChanged);
-    connect(camera_.get(), &QCamera::manualIsoSensitivityChanged, this,
-            [this] { emit settingsChanged(); });
     connect(camera_.get(), &QCamera::manualExposureTimeChanged, this,
             [this] { emit settingsChanged(); });
     connect(camera_.get(), &QCamera::exposureCompensationChanged, this,
@@ -530,15 +519,6 @@ class WebcamSession final : public CameraSession {
     if (id == "exposureMode") {
       camera_->setExposureMode(
           static_cast<QCamera::ExposureMode>(value.toInt(&converted)));
-    } else if (id == "iso") {
-      const int iso = value.toInt(&converted);
-      if (converted) {
-        if (iso < 0) {
-          camera_->setAutoIsoSensitivity();
-        } else {
-          camera_->setManualIsoSensitivity(iso);
-        }
-      }
     } else if (id == "exposureTime") {
       const float seconds = value.toFloat(&converted);
       if (converted) {

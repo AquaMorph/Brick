@@ -79,4 +79,6 @@ TODO
 
 ## Common Pitfalls
 
-TODO
+- Brick is under active development. Do not add backward-compatibility code for
+  obsolete settings, persisted data, or behavior unless a task explicitly
+  requires it. Prefer removing obsolete paths and updating the current format.
