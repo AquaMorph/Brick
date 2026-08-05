@@ -119,7 +119,7 @@ int main(int argc, char* argv[]) {
   passed &= expect(
       QDir(QDir(projectPath).filePath(
                "0001_FIRST_SCENE/0001_WIDE_SHOT"))
-          .exists("test_shots"),
+          .exists("tests"),
       "Shot creation did not create the test shots folder.");
   passed &= expect(created->takeCount(0, 0) == 1,
                    "Shot creation did not add its first take.");
@@ -138,6 +138,132 @@ int main(int argc, char* argv[]) {
                "0001_FIRST_SCENE/0001_WIDE_SHOT/0001_TAKE"))
               .exists("frames/RAW"),
       "Shot creation did not create the first take's frame folders.");
+
+  const QString wideShotPath = QDir(projectPath).filePath(
+      "0001_FIRST_SCENE/0001_WIDE_SHOT");
+  passed &= expect(created->shotDirectory(0, 0) == wideShotPath,
+                   "The shot directory was not resolved correctly.");
+  passed &= expect(created->testShotDirectory(0, 0) ==
+                       QDir(wideShotPath).filePath("tests"),
+                   "The test shot directory was not resolved correctly.");
+  passed &= expect(created->shotDirectory(0, 99).isEmpty(),
+                   "An invalid shot directory should not resolve.");
+
+  ShotCameraSettings camera{"gphoto", "usb:001,002",
+                            {{"aperture", "8"},
+                             {"iso", "200"},
+                             {"setting/with/slashes", "preserved"}}};
+  {
+    QSettings shotConfig(QDir(wideShotPath).filePath("shot.conf"),
+                         QSettings::IniFormat);
+    shotConfig.setValue("FutureFeature/unknownValue", "keep me");
+    shotConfig.sync();
+  }
+  passed &= expect(created->saveCurrentShotCameraSettings(0, 0, camera, &error),
+                   "Current camera settings could not be saved.");
+  const auto restoredCamera =
+      created->currentShotCameraSettings(0, 0, &error);
+  passed &= expect(restoredCamera == camera,
+                   "Current camera settings were not restored.");
+  {
+    QSettings shotConfig(QDir(wideShotPath).filePath("shot.conf"),
+                         QSettings::IniFormat);
+    passed &= expect(
+        shotConfig.value("Shot/formatVersion").toInt() == 1 &&
+            shotConfig.value("FutureFeature/unknownValue").toString() ==
+                "keep me",
+        "Saving camera settings changed the format or unknown config.");
+  }
+
+  const QString sourceOne =
+      QDir(temporaryDirectory.path()).filePath("capture-one.JPG");
+  const QString sourceTwo =
+      QDir(temporaryDirectory.path()).filePath("capture-two.png");
+  for (const QString& source : {sourceOne, sourceTwo}) {
+    QFile image(source);
+    passed &= expect(image.open(QIODevice::WriteOnly),
+                     "Could not create a captured image fixture.");
+    passed &= expect(image.write("test image") == 10,
+                     "Could not write a captured image fixture.");
+  }
+  const QDateTime firstCapture =
+      QDateTime::fromString("2026-07-01T12:34:56.123Z", Qt::ISODate);
+  const QDateTime secondCapture =
+      QDateTime::fromString("2026-07-01T12:35:01.456Z", Qt::ISODate);
+  const std::map<QString, QString> firstSettings = {
+      {"Aperture", "f/8"}, {"ISO Speed", "200"}};
+  const std::map<QString, QString> secondSettings = {
+      {"Aperture", "f/11"}, {"White Balance", "Daylight"}};
+  const auto firstTestShot = created->importTestShot(
+      0, 0, sourceOne, firstCapture, "Canon EOS Test", camera,
+      firstSettings, firstSettings, &error);
+  const auto secondTestShot = created->importTestShot(
+      0, 0, sourceTwo, secondCapture, "Canon EOS Test", camera,
+      secondSettings, secondSettings, &error);
+  passed &= expect(firstTestShot.has_value() &&
+                       firstTestShot->fileName == "000001.jpg" &&
+                       QFile::exists(firstTestShot->filePath),
+                   "The first test shot was not imported and numbered.");
+  passed &= expect(secondTestShot.has_value() &&
+                       secondTestShot->fileName == "000002.png" &&
+                       QFile::exists(secondTestShot->filePath),
+                   "The second test shot was not imported and numbered.");
+  auto restoredTestShots = created->testShots(0, 0, &error);
+  passed &= expect(
+      restoredTestShots.size() == 2 &&
+          restoredTestShots[0].capturedUtc == firstCapture &&
+          restoredTestShots[0].cameraDisplayName == "Canon EOS Test" &&
+          restoredTestShots[0].cameraBackend == camera.backend &&
+          restoredTestShots[0].cameraDeviceId == camera.deviceId &&
+          restoredTestShots[0].capturedSettings == firstSettings &&
+          restoredTestShots[0].displaySettings == firstSettings &&
+          restoredTestShots[1].capturedSettings == secondSettings,
+      "Test shot capture metadata was not restored.");
+  passed &= expect(created->deleteTestShot(0, 0, "000001.jpg", &error),
+                   "A test shot could not be deleted.");
+  passed &= expect(!created->deleteTestShot(0, 0, "../000002.png", &error),
+                   "Test shot deletion accepted an invalid file name.");
+  restoredTestShots = created->testShots(0, 0, &error);
+  passed &= expect(restoredTestShots.size() == 1 &&
+                       restoredTestShots[0].fileName == "000002.png" &&
+                       !QFile::exists(QDir(wideShotPath).filePath(
+                           "tests/000001.jpg")),
+                   "Test shot deletion did not remove its image and metadata.");
+  const auto thirdTestShot = created->importTestShot(
+      0, 0, sourceOne, firstCapture, "Canon EOS Test", camera,
+      firstSettings, firstSettings, &error);
+  passed &= expect(thirdTestShot.has_value() &&
+                       thirdTestShot->fileName == "000003.jpg",
+                   "Test shot numbering reused a deleted number.");
+
+  const QString secondShotPath = QDir(projectPath).filePath(
+      "0001_FIRST_SCENE/0002_ESTABLISHING_SHOT");
+  QDir secondShotDirectory(secondShotPath);
+  passed &= expect(secondShotDirectory.rename("tests", "test_shots"),
+                   "Could not arrange a legacy test_shots fixture.");
+  opened = Project::open(projectPath, &error);
+  passed &= expect(opened.has_value() &&
+                       secondShotDirectory.exists("tests") &&
+                       !secondShotDirectory.exists("test_shots"),
+                   "Opening did not safely migrate the legacy test_shots folder.");
+  if (opened.has_value()) {
+    const auto reopenedCamera =
+        opened->currentShotCameraSettings(0, 0, &error);
+    const auto reopenedTestShots = opened->testShots(0, 0, &error);
+    passed &= expect(reopenedCamera == camera &&
+                         reopenedTestShots.size() == 2 &&
+                         reopenedTestShots[0].fileName == "000002.png" &&
+                         reopenedTestShots[1].fileName == "000003.jpg",
+                     "Camera settings and test shots did not survive reopening.");
+  }
+  {
+    QSettings shotConfig(QDir(wideShotPath).filePath("shot.conf"),
+                         QSettings::IniFormat);
+    passed &= expect(
+        shotConfig.value("FutureFeature/unknownValue").toString() == "keep me",
+        "Test shot updates removed unknown shot.conf data.");
+  }
+
   passed &= expect(created->createTake(0, 0, &error),
                    "A second take was not created.");
   passed &= expect(created->takeCount(0, 0) == 2,

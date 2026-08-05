@@ -11,7 +11,12 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Multimedia Widgets)
+
+option(BRICK_ENABLE_CANON_EDSDK
+       "Build Canon DSLR support using a locally supplied Canon EDSDK" OFF)
+set(BRICK_EDSDK_ROOT "${CMAKE_SOURCE_DIR}/third_party/canon/EDSDK" CACHE PATH
+    "Path to the extracted Canon EDSDK directory")
 
 qt_standard_project_setup()
 
@@ -21,11 +26,66 @@ qt_add_executable(brick
   src/main.cpp
   src/main_window.cpp
   src/main_window.h
+  src/camera.cpp
+  src/camera.h
+  src/cinematography_widget.cpp
+  src/cinematography_widget.h
   src/project.cpp
   src/project.h
 )
 
-target_link_libraries(brick PRIVATE Qt6::Widgets)
+target_link_libraries(brick PRIVATE Qt6::Multimedia Qt6::Widgets)
+
+if(BRICK_ENABLE_CANON_EDSDK)
+  if(WIN32)
+    set(BRICK_EDSDK_INCLUDE_DIR "${BRICK_EDSDK_ROOT}/Header")
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+      set(BRICK_EDSDK_LIBRARY "${BRICK_EDSDK_ROOT}/../EDSDK_64/Library/EDSDK.lib")
+      set(BRICK_EDSDK_RUNTIME_DIR "${BRICK_EDSDK_ROOT}/../EDSDK_64/Dll")
+    else()
+      set(BRICK_EDSDK_LIBRARY "${BRICK_EDSDK_ROOT}/Library/EDSDK.lib")
+      set(BRICK_EDSDK_RUNTIME_DIR "${BRICK_EDSDK_ROOT}/Dll")
+    endif()
+  elseif(APPLE)
+    set(BRICK_EDSDK_INCLUDE_DIR "${BRICK_EDSDK_ROOT}/Headers")
+    set(BRICK_EDSDK_LIBRARY "${BRICK_EDSDK_ROOT}/EDSDK")
+  elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+    set(BRICK_EDSDK_INCLUDE_DIR "${BRICK_EDSDK_ROOT}/Header")
+    set(BRICK_EDSDK_LIBRARY "${BRICK_EDSDK_ROOT}/Library/ARM64/libEDSDK.so")
+  elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|armv7)")
+    set(BRICK_EDSDK_INCLUDE_DIR "${BRICK_EDSDK_ROOT}/Header")
+    set(BRICK_EDSDK_LIBRARY "${BRICK_EDSDK_ROOT}/Library/ARM32/libEDSDK.so")
+  else()
+    set(BRICK_EDSDK_INCLUDE_DIR "${BRICK_EDSDK_ROOT}/Header")
+    set(BRICK_EDSDK_LIBRARY "${BRICK_EDSDK_ROOT}/Library/x86_64/libEDSDK.so")
+  endif()
+
+  if(NOT EXISTS "${BRICK_EDSDK_INCLUDE_DIR}/EDSDK.h")
+    message(FATAL_ERROR
+      "Canon EDSDK headers were not found. Extract your licensed SDK and set "
+      "BRICK_EDSDK_ROOT to its EDSDK directory (or EDSDK.framework on macOS).")
+  endif()
+  if(NOT BRICK_EDSDK_LIBRARY OR NOT EXISTS "${BRICK_EDSDK_LIBRARY}")
+    message(FATAL_ERROR "A Canon EDSDK library was not found for this platform.")
+  endif()
+  target_sources(brick PRIVATE src/canon_camera.cpp src/canon_camera.h)
+  target_include_directories(brick PRIVATE "${BRICK_EDSDK_INCLUDE_DIR}")
+  target_link_libraries(brick PRIVATE "${BRICK_EDSDK_LIBRARY}")
+  target_compile_definitions(brick PRIVATE BRICK_HAS_CANON_EDSDK)
+  if(UNIX AND NOT APPLE)
+    target_compile_definitions(brick PRIVATE TARGET_OS_LINUX=1)
+  elseif(APPLE)
+    target_compile_definitions(brick PRIVATE __MACOS__=1)
+  endif()
+  if(WIN32)
+    add_custom_command(TARGET brick POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              "${BRICK_EDSDK_RUNTIME_DIR}/EDSDK.dll"
+              "${BRICK_EDSDK_RUNTIME_DIR}/EdsImage.dll"
+              "$<TARGET_FILE_DIR:brick>"
+      VERBATIM)
+  endif()
+endif()
 
 set_target_properties(brick PROPERTIES
   MACOSX_BUNDLE_BUNDLE_NAME "Brick"

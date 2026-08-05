@@ -40,6 +40,47 @@ int main(int argc, char* argv[]) {
       background-color: #282828;
     }
 
+    QFrame#cameraSidebar {
+      border: 1px solid #2d2d2d;
+      border-radius: 4px;
+      background-color: #111111;
+    }
+
+    QLabel#cameraPreview {
+      border: 1px solid #303030;
+      background-color: #030303;
+      color: #777777;
+    }
+
+    QLabel#cinematographyShotLabel,
+    QLabel#cameraStatus {
+      color: #999999;
+    }
+
+    QListWidget#testShotGallery {
+      border: 1px solid #2d2d2d;
+      background-color: #0d0d0d;
+    }
+
+    QListWidget#testShotGallery::item {
+      border: 1px solid transparent;
+      padding: 4px;
+    }
+
+    QListWidget#testShotGallery::item:selected {
+      border-color: #a23b31;
+      background-color: #2a1513;
+    }
+
+    QComboBox {
+      min-height: 28px;
+      padding: 2px 8px;
+      border: 1px solid #444444;
+      border-radius: 3px;
+      background-color: #202020;
+      color: #f2f2f2;
+    }
+
     QTabBar {
       background-color: #111111;
     }

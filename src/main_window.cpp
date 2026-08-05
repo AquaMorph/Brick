@@ -1,5 +1,7 @@
 #include "main_window.h"
 
+#include "cinematography_widget.h"
+
 #include <QAction>
 #include <QApplication>
 #include <QFileDialog>
@@ -224,10 +226,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   connect(moveShotDownButton_, &QPushButton::clicked, this,
           [this] { moveShot(1); });
   connect(shotList_, &QListWidget::currentRowChanged, this,
-          [this] {
-            updateShotActions();
-            refreshTakes();
-          });
+           [this] {
+             updateShotActions();
+             refreshTakes();
+             updateCinematographyShot();
+           });
   connect(newTakeButton_, &QPushButton::clicked, this,
           [this] { createTake(); });
   connect(deleteTakeButton_, &QPushButton::clicked, this,
@@ -254,8 +257,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   };
 
   tabs->addTab(directTab, "Direct");
-  tabs->addTab(createTakeTab("Cinematography", &cinematographyTakeLabel_),
-               "Cinematography");
+  cinematographyWidget_ = new CinematographyWidget(tabs);
+  tabs->addTab(cinematographyWidget_, "Cinematography");
   tabs->addTab(createTakeTab("Animation", &animationTakeLabel_), "Animation");
   setCentralWidget(tabs);
 
@@ -677,8 +680,15 @@ void MainWindow::updateActiveTakeViews() {
                .arg(project_->shots(active.sceneIndex)[active.shotIndex])
                .arg(active.takeIndex + 1, 4, 10, QLatin1Char('0'));
   }
-  cinematographyTakeLabel_->setText(text);
   animationTakeLabel_->setText(text);
+}
+
+
+void MainWindow::updateCinematographyShot() {
+  const int sceneIndex = sceneList_->currentRow();
+  const int shotIndex = shotList_->currentRow();
+  cinematographyWidget_->setShot(project_ ? &*project_ : nullptr, sceneIndex,
+                                 shotIndex);
 }
 
 
@@ -697,4 +707,5 @@ void MainWindow::setProject(Project project) {
     refreshTakes(project_->activeTake()->takeIndex);
   }
   updateActiveTakeViews();
+  updateCinematographyShot();
 }

@@ -9,6 +9,7 @@
 class QListWidget;
 class QLabel;
 class QPushButton;
+class CinematographyWidget;
 
 class MainWindow : public QMainWindow {
  public:
@@ -35,6 +36,7 @@ class MainWindow : public QMainWindow {
   void refreshTakes(int selectedRow = -1);
   void updateTakeActions();
   void updateActiveTakeViews();
+  void updateCinematographyShot();
   void setProject(Project project);
 
   std::optional<Project> project_;
@@ -55,6 +57,6 @@ class MainWindow : public QMainWindow {
   QPushButton* newTakeButton_ = nullptr;
   QPushButton* deleteTakeButton_ = nullptr;
   QPushButton* selectTakeButton_ = nullptr;
-  QLabel* cinematographyTakeLabel_ = nullptr;
+  CinematographyWidget* cinematographyWidget_ = nullptr;
   QLabel* animationTakeLabel_ = nullptr;
 };

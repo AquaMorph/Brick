@@ -37,7 +37,7 @@ Project_Name
     ∟ shot.conf
     ∟ audio
       ∟ scene.wav
-    ∟ test_shots
+    ∟ tests
             ∟ 000001.jpg
             ∟ ...
             ∟ nnnnnn.jpg
