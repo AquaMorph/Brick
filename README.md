@@ -62,3 +62,8 @@ Qt's platform deployment tools (`windeployqt`, `macdeployqt`, or
 `qt_generate_deploy_app_script`) will be added when distributable packages are
 introduced. The continuous integration workflow compiles the application on
 Linux, Windows, and macOS for every change.
+
+## License
+
+Brick is licensed under the [MIT License](LICENSE). Canon EDSDK is not included
+and remains subject to Canon's own license terms.
