@@ -6,48 +6,51 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QTimer>
-
+#include <QtGlobal>
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <map>
 #include <utility>
 
 namespace {
 
 QString errorText(EdsError error) {
-  return QString("Canon EDSDK error 0x%1")
-      .arg(error, 8, 16, QLatin1Char('0'));
+  return QString("Canon EDSDK error 0x%1").arg(error, 8, 16, QLatin1Char('0'));
 }
 
-QString hexValue(EdsInt32 value) {
-  return QString::number(static_cast<EdsUInt32>(value), 16);
-}
+QString hexValue(EdsInt32 value) { return QString::number(static_cast<EdsUInt32>(value), 16); }
 
 QString canonLabel(EdsPropertyID property, EdsInt32 value) {
-  static const std::map<EdsInt32, QString> iso = {
-      {0x00, "Auto"}, {0x48, "100"},  {0x50, "200"},
-      {0x58, "400"},  {0x60, "800"},  {0x68, "1600"},
-      {0x70, "3200"}, {0x78, "6400"}, {0x80, "12800"}};
+  static const std::map<EdsInt32, QString> iso = {{0x00, "Auto"}, {0x48, "100"},  {0x50, "200"},
+                                                  {0x58, "400"},  {0x60, "800"},  {0x68, "1600"},
+                                                  {0x70, "3200"}, {0x78, "6400"}, {0x80, "12800"}};
   static const std::map<EdsInt32, QString> aperture = {
-      {0x18, "f/1.0"}, {0x20, "f/1.4"}, {0x28, "f/2.0"},
-      {0x30, "f/2.8"}, {0x38, "f/4.0"}, {0x40, "f/5.6"},
-      {0x48, "f/8.0"}, {0x50, "f/11"},  {0x58, "f/16"},
-      {0x60, "f/22"},  {0x68, "f/32"}};
+      {0x18, "f/1.0"}, {0x20, "f/1.4"}, {0x28, "f/2.0"}, {0x30, "f/2.8"},
+      {0x38, "f/4.0"}, {0x40, "f/5.6"}, {0x48, "f/8.0"}, {0x50, "f/11"},
+      {0x58, "f/16"},  {0x60, "f/22"},  {0x68, "f/32"}};
   static const std::map<EdsInt32, QString> shutter = {
-      {0x0c, "Bulb"},  {0x10, "30 s"}, {0x18, "15 s"},
-      {0x20, "8 s"},   {0x28, "4 s"},  {0x30, "2 s"},
-      {0x38, "1 s"},   {0x40, "1/2"},  {0x48, "1/4"},
-      {0x50, "1/8"},   {0x58, "1/15"}, {0x60, "1/30"},
-      {0x68, "1/60"},  {0x70, "1/125"}, {0x78, "1/250"},
+      {0x0c, "Bulb"},  {0x10, "30 s"},   {0x18, "15 s"},  {0x20, "8 s"},   {0x28, "4 s"},
+      {0x30, "2 s"},   {0x38, "1 s"},    {0x40, "1/2"},   {0x48, "1/4"},   {0x50, "1/8"},
+      {0x58, "1/15"},  {0x60, "1/30"},   {0x68, "1/60"},  {0x70, "1/125"}, {0x78, "1/250"},
       {0x80, "1/500"}, {0x88, "1/1000"}, {0x90, "1/2000"}};
   static const std::map<EdsInt32, QString> whiteBalance = {
-      {0, "Auto"}, {1, "Daylight"}, {2, "Cloudy"}, {3, "Tungsten"},
-      {4, "Fluorescent"}, {5, "Flash"}, {8, "Shade"}, {9, "Color temperature"}};
-  static const std::map<EdsInt32, QString> aeMode = {
-      {kEdsAEMode_Program, "Program"}, {kEdsAEMode_Tv, "Shutter priority"},
-      {kEdsAEMode_Av, "Aperture priority"}, {kEdsAEMode_Manual, "Manual"},
-      {kEdsAEMode_Bulb, "Bulb"}, {kEdsAEMode_Green, "Auto"},
-      {kEdsAEMode_Movie, "Movie"}};
+      {0, "Auto"},        {1, "Daylight"}, {2, "Cloudy"}, {3, "Tungsten"},
+      {4, "Fluorescent"}, {5, "Flash"},    {8, "Shade"},  {9, "Color temperature"}};
+  static const std::map<EdsInt32, QString> pictureStyle = {
+      {kEdsPictureStyle_Standard, "Standard"},   {kEdsPictureStyle_Portrait, "Portrait"},
+      {kEdsPictureStyle_Landscape, "Landscape"}, {kEdsPictureStyle_Neutral, "Neutral"},
+      {kEdsPictureStyle_Faithful, "Faithful"},   {kEdsPictureStyle_Monochrome, "Monochrome"},
+      {kEdsPictureStyle_Auto, "Auto"},           {kEdsPictureStyle_FineDetail, "Fine detail"},
+      {kEdsPictureStyle_User1, "User 1"},        {kEdsPictureStyle_User2, "User 2"},
+      {kEdsPictureStyle_User3, "User 3"}};
+  static const std::map<EdsInt32, QString> aeMode = {{kEdsAEMode_Program, "Program"},
+                                                     {kEdsAEMode_Tv, "Shutter priority"},
+                                                     {kEdsAEMode_Av, "Aperture priority"},
+                                                     {kEdsAEMode_Manual, "Manual"},
+                                                     {kEdsAEMode_Bulb, "Bulb"},
+                                                     {kEdsAEMode_Green, "Auto"},
+                                                     {kEdsAEMode_Movie, "Movie"}};
   static const std::map<EdsInt32, QString> imageQuality = {
       {EdsImageQuality_LJ, "JPEG large"},
       {EdsImageQuality_LJF, "JPEG large fine"},
@@ -58,8 +61,7 @@ QString canonLabel(EdsPropertyID property, EdsInt32 value) {
       {EdsImageQuality_LRLJF, "RAW + JPEG large fine"},
       {EdsImageQuality_LRLJN, "RAW + JPEG large normal"}};
   static const std::map<EdsInt32, QString> metering = {
-      {1, "Spot"}, {3, "Evaluative"}, {4, "Partial"},
-      {5, "Center-weighted"}};
+      {1, "Spot"}, {3, "Evaluative"}, {4, "Partial"}, {5, "Center-weighted"}};
   const std::map<EdsInt32, QString>* values = nullptr;
   if (property == kEdsPropID_ISOSpeed) {
     values = &iso;
@@ -73,6 +75,8 @@ QString canonLabel(EdsPropertyID property, EdsInt32 value) {
     values = &aeMode;
   } else if (property == kEdsPropID_ImageQuality) {
     values = &imageQuality;
+  } else if (property == kEdsPropID_PictureStyle) {
+    values = &pictureStyle;
   } else if (property == kEdsPropID_MeteringMode) {
     values = &metering;
   }
@@ -93,19 +97,22 @@ struct CanonProperty {
   EdsPropertyID id;
   const char* key;
   const char* label;
+  CameraSettingType type = CameraSettingType::Choice;
+  const char* group = "Capture";
 };
 
-constexpr std::array<CanonProperty, 9> kCanonProperties = {{
+constexpr std::array<CanonProperty, 10> kCanonProperties = {{
     {kEdsPropID_AEModeSelect, "aeMode", "Exposure mode"},
-    {kEdsPropID_Tv, "shutter", "Shutter"},
-    {kEdsPropID_Av, "aperture", "Aperture"},
-    {kEdsPropID_ISOSpeed, "iso", "ISO"},
-    {kEdsPropID_ExposureCompensation, "exposureCompensation",
-     "Exposure compensation"},
+    {kEdsPropID_Tv, "shutter", "Shutter speed", CameraSettingType::SteppedChoice},
+    {kEdsPropID_Av, "aperture", "Aperture", CameraSettingType::SteppedChoice},
+    {kEdsPropID_ISOSpeed, "iso", "ISO", CameraSettingType::SteppedChoice},
+    {kEdsPropID_ExposureCompensation, "exposureCompensation", "Exposure compensation",
+     CameraSettingType::SteppedChoice},
     {kEdsPropID_WhiteBalance, "whiteBalance", "White balance"},
+    {kEdsPropID_PictureStyle, "pictureStyle", "Picture style"},
+    {kEdsPropID_ImageQuality, "imageQuality", "Image quality"},
     {kEdsPropID_MeteringMode, "meteringMode", "Metering"},
     {kEdsPropID_DriveMode, "driveMode", "Drive mode"},
-    {kEdsPropID_ImageQuality, "imageQuality", "Image quality"},
 }};
 
 class CanonSession final : public CameraSession {
@@ -131,10 +138,11 @@ class CanonSession final : public CameraSession {
   }
 
   [[nodiscard]] QString backend() const override { return device_.backend; }
+
   [[nodiscard]] QString deviceId() const override { return device_.id; }
-  [[nodiscard]] QString displayName() const override {
-    return device_.displayName;
-  }
+
+  [[nodiscard]] QString displayName() const override { return device_.displayName; }
+
   [[nodiscard]] bool isReady() const override { return sessionOpen_; }
 
   [[nodiscard]] std::vector<CameraSetting> settings() const override {
@@ -147,18 +155,56 @@ class CanonSession final : public CameraSession {
       EdsInt32 current = 0;
       if (EdsGetPropertyDesc(camera_, property.id, &descriptor) != EDS_ERR_OK ||
           descriptor.numElements <= 0 ||
-          EdsGetPropertyData(camera_, property.id, 0, sizeof(current),
-                             &current) != EDS_ERR_OK) {
+          EdsGetPropertyData(camera_, property.id, 0, sizeof(current), &current) != EDS_ERR_OK) {
         continue;
       }
       CameraSetting setting{property.key, property.label, hexValue(current), {}};
+      setting.type = property.type;
+      setting.group = property.group;
       for (int index = 0; index < descriptor.numElements; ++index) {
         const EdsInt32 value = descriptor.propDesc[index];
-        setting.choices.push_back(
-            {hexValue(value), canonLabel(property.id, value)});
+        setting.choices.push_back({hexValue(value), canonLabel(property.id, value)});
       }
       result.push_back(std::move(setting));
     }
+
+    CameraSetting externalFlash{
+        "externalFlash", "External flash", externalFlash_ ? "1" : "0", {{"0", "Off"}, {"1", "On"}}};
+    externalFlash.type = CameraSettingType::Toggle;
+    externalFlash.group = "Capture";
+    result.push_back(std::move(externalFlash));
+
+    CameraSetting previewOffset{"exposurePreviewOffset",
+                                "Exposure preview offset",
+                                QString::number(exposurePreviewOffset_, 'f', 1),
+                                {}};
+    previewOffset.type = CameraSettingType::DecimalRange;
+    previewOffset.minimum = -3.0;
+    previewOffset.maximum = 3.0;
+    previewOffset.step = 0.1;
+    previewOffset.decimals = 1;
+    previewOffset.suffix = " EV";
+    previewOffset.group = "Live preview";
+    result.push_back(std::move(previewOffset));
+
+    EdsUInt32 depthOfField = depthOfFieldPreview_ ? 1 : 0;
+    if (EdsGetPropertyData(camera_, kEdsPropID_Evf_DepthOfFieldPreview, 0, sizeof(depthOfField),
+                           &depthOfField) == EDS_ERR_OK) {
+      depthOfFieldPreview_ = depthOfField != 0;
+    }
+    CameraSetting depthPreview{"depthOfFieldPreview",
+                               "Depth of field preview",
+                               depthOfFieldPreview_ ? "1" : "0",
+                               {{"0", "Off"}, {"1", "On"}}};
+    depthPreview.type = CameraSettingType::Toggle;
+    depthPreview.group = "Live preview";
+    result.push_back(std::move(depthPreview));
+
+    CameraSetting simulation{
+        "lvSimulation", "LV simulation", lvSimulation_ ? "1" : "0", {{"0", "Off"}, {"1", "On"}}};
+    simulation.type = CameraSettingType::Toggle;
+    simulation.group = "Live preview";
+    result.push_back(std::move(simulation));
     return result;
   }
 
@@ -168,16 +214,14 @@ class CanonSession final : public CameraSession {
       return;
     }
     EdsUInt32 output = 0;
-    EdsError error = EdsGetPropertyData(camera_, kEdsPropID_Evf_OutputDevice,
-                                        0, sizeof(output), &output);
+    EdsError error =
+        EdsGetPropertyData(camera_, kEdsPropID_Evf_OutputDevice, 0, sizeof(output), &output);
     output |= kEdsEvfOutputDevice_PC;
     if (error == EDS_ERR_OK) {
-      error = EdsSetPropertyData(camera_, kEdsPropID_Evf_OutputDevice, 0,
-                                 sizeof(output), &output);
+      error = EdsSetPropertyData(camera_, kEdsPropID_Evf_OutputDevice, 0, sizeof(output), &output);
     }
     if (error != EDS_ERR_OK) {
-      emit errorOccurred("Could not start Canon live view: " +
-                         errorText(error));
+      emit errorOccurred("Could not start Canon live view: " + errorText(error));
       return;
     }
     liveViewStarted_ = true;
@@ -191,11 +235,10 @@ class CanonSession final : public CameraSession {
       return;
     }
     EdsUInt32 output = 0;
-    if (EdsGetPropertyData(camera_, kEdsPropID_Evf_OutputDevice, 0,
-                           sizeof(output), &output) == EDS_ERR_OK) {
+    if (EdsGetPropertyData(camera_, kEdsPropID_Evf_OutputDevice, 0, sizeof(output), &output) ==
+        EDS_ERR_OK) {
       output &= ~static_cast<EdsUInt32>(kEdsEvfOutputDevice_PC);
-      EdsSetPropertyData(camera_, kEdsPropID_Evf_OutputDevice, 0,
-                         sizeof(output), &output);
+      EdsSetPropertyData(camera_, kEdsPropID_Evf_OutputDevice, 0, sizeof(output), &output);
     }
     liveViewStarted_ = false;
   }
@@ -206,8 +249,7 @@ class CanonSession final : public CameraSession {
       return;
     }
     pendingCaptureBase_ = destinationBase;
-    const EdsError error =
-        EdsSendCommand(camera_, kEdsCameraCommand_TakePicture, 0);
+    const EdsError error = EdsSendCommand(camera_, kEdsCameraCommand_TakePicture, 0);
     if (error != EDS_ERR_OK) {
       pendingCaptureBase_.clear();
       emit errorOccurred("Canon capture failed: " + errorText(error));
@@ -215,17 +257,50 @@ class CanonSession final : public CameraSession {
   }
 
   void setSetting(const QString& id, const QString& value) override {
-    const auto property = std::find_if(
-        kCanonProperties.begin(), kCanonProperties.end(),
-        [&id](const CanonProperty& candidate) { return id == candidate.key; });
+    if (id == "externalFlash" || id == "lvSimulation") {
+      const bool enabled = value == "1";
+      if (id == "externalFlash") {
+        externalFlash_ = enabled;
+      } else {
+        lvSimulation_ = enabled;
+      }
+      emit settingsChanged();
+      return;
+    }
+    if (id == "exposurePreviewOffset") {
+      bool converted = false;
+      const double offset = value.toDouble(&converted);
+      if (!converted || offset < -3.0 || offset > 3.0) {
+        emit errorOccurred("The exposure preview offset is invalid.");
+        return;
+      }
+      exposurePreviewOffset_ = offset;
+      emit settingsChanged();
+      return;
+    }
+    if (id == "depthOfFieldPreview") {
+      const EdsUInt32 enabled = value == "1" ? 1 : 0;
+      const EdsError error = EdsSetPropertyData(camera_, kEdsPropID_Evf_DepthOfFieldPreview, 0,
+                                                sizeof(enabled), &enabled);
+      if (error != EDS_ERR_OK) {
+        emit errorOccurred("Canon rejected depth of field preview: " + errorText(error));
+        return;
+      }
+      depthOfFieldPreview_ = enabled != 0;
+      emit settingsChanged();
+      return;
+    }
+    const auto property =
+        std::find_if(kCanonProperties.begin(), kCanonProperties.end(),
+                     [&id](const CanonProperty& candidate) { return id == candidate.key; });
     bool converted = false;
     const EdsUInt32 nativeValue = value.toUInt(&converted, 16);
     if (property == kCanonProperties.end() || !converted) {
       emit errorOccurred("The Canon camera setting is invalid.");
       return;
     }
-    const EdsError error = EdsSetPropertyData(
-        camera_, property->id, 0, sizeof(nativeValue), &nativeValue);
+    const EdsError error =
+        EdsSetPropertyData(camera_, property->id, 0, sizeof(nativeValue), &nativeValue);
     if (error != EDS_ERR_OK) {
       emit errorOccurred("Canon rejected the setting: " + errorText(error));
       return;
@@ -234,8 +309,7 @@ class CanonSession final : public CameraSession {
   }
 
  private:
-  static EdsError EDSCALLBACK objectEvent(EdsObjectEvent event, EdsBaseRef ref,
-                                          EdsVoid* context) {
+  static EdsError EDSCALLBACK objectEvent(EdsObjectEvent event, EdsBaseRef ref, EdsVoid* context) {
     auto* self = static_cast<CanonSession*>(context);
     if (event == kEdsObjectEvent_DirItemRequestTransfer && ref != nullptr) {
       self->download(static_cast<EdsDirectoryItemRef>(ref));
@@ -246,18 +320,15 @@ class CanonSession final : public CameraSession {
     return EDS_ERR_OK;
   }
 
-  static EdsError EDSCALLBACK propertyEvent(EdsPropertyEvent,
-                                            EdsPropertyID, EdsUInt32,
+  static EdsError EDSCALLBACK propertyEvent(EdsPropertyEvent, EdsPropertyID, EdsUInt32,
                                             EdsVoid* context) {
     emit static_cast<CanonSession*>(context)->settingsChanged();
     return EDS_ERR_OK;
   }
 
-  static EdsError EDSCALLBACK stateEvent(EdsStateEvent event, EdsUInt32,
-                                         EdsVoid* context) {
+  static EdsError EDSCALLBACK stateEvent(EdsStateEvent event, EdsUInt32, EdsVoid* context) {
     if (event == kEdsStateEvent_Shutdown) {
-      emit static_cast<CanonSession*>(context)->errorOccurred(
-          "The Canon camera was disconnected.");
+      emit static_cast<CanonSession*>(context)->errorOccurred("The Canon camera was disconnected.");
     }
     return EDS_ERR_OK;
   }
@@ -265,8 +336,7 @@ class CanonSession final : public CameraSession {
   void initialize() {
     EdsError error = EdsInitializeSDK();
     if (error != EDS_ERR_OK) {
-      initializationError_ = "Could not initialize Canon EDSDK: " +
-                             errorText(error);
+      initializationError_ = "Could not initialize Canon EDSDK: " + errorText(error);
       return;
     }
     sdkInitialized_ = true;
@@ -305,21 +375,17 @@ class CanonSession final : public CameraSession {
     if (error == EDS_ERR_OK) {
       sessionOpen_ = true;
       EdsSetObjectEventHandler(camera_, kEdsObjectEvent_All, objectEvent, this);
-      EdsSetPropertyEventHandler(camera_, kEdsPropertyEvent_All, propertyEvent,
-                                 this);
-      EdsSetCameraStateEventHandler(camera_, kEdsStateEvent_All, stateEvent,
-                                    this);
+      EdsSetPropertyEventHandler(camera_, kEdsPropertyEvent_All, propertyEvent, this);
+      EdsSetCameraStateEventHandler(camera_, kEdsStateEvent_All, stateEvent, this);
       EdsUInt32 saveTo = kEdsSaveTo_Host;
-      error = EdsSetPropertyData(camera_, kEdsPropID_SaveTo, 0,
-                                 sizeof(saveTo), &saveTo);
+      error = EdsSetPropertyData(camera_, kEdsPropID_SaveTo, 0, sizeof(saveTo), &saveTo);
       EdsCapacity capacity{0x7fffffff, 0x1000, 1};
       if (error == EDS_ERR_OK) {
         error = EdsSetCapacity(camera_, capacity);
       }
     }
     if (error != EDS_ERR_OK) {
-      initializationError_ = "Could not open the Canon camera: " +
-                             errorText(error);
+      initializationError_ = "Could not open the Canon camera: " + errorText(error);
       sessionOpen_ = false;
     }
   }
@@ -343,9 +409,22 @@ class CanonSession final : public CameraSession {
       EdsUInt64 length = 0;
       if (EdsGetPointer(stream, &bytes) == EDS_ERR_OK &&
           EdsGetLength(stream, &length) == EDS_ERR_OK) {
-        const QImage frame = QImage::fromData(
-            static_cast<const uchar*>(bytes), static_cast<int>(length), "JPEG");
+        QImage frame =
+            QImage::fromData(static_cast<const uchar*>(bytes), static_cast<int>(length), "JPEG");
         if (!frame.isNull()) {
+          if (lvSimulation_ && exposurePreviewOffset_ != 0.0) {
+            frame.convertTo(QImage::Format_RGB32);
+            const double multiplier = std::exp2(exposurePreviewOffset_);
+            for (int y = 0; y < frame.height(); ++y) {
+              auto* pixels = reinterpret_cast<QRgb*>(frame.scanLine(y));
+              for (int x = 0; x < frame.width(); ++x) {
+                const QRgb pixel = pixels[x];
+                pixels[x] = qRgb(std::clamp(static_cast<int>(qRed(pixel) * multiplier), 0, 255),
+                                 std::clamp(static_cast<int>(qGreen(pixel) * multiplier), 0, 255),
+                                 std::clamp(static_cast<int>(qBlue(pixel) * multiplier), 0, 255));
+              }
+            }
+          }
           emit previewFrame(frame);
         }
       }
@@ -366,14 +445,13 @@ class CanonSession final : public CameraSession {
     EdsDirectoryItemInfo info{};
     EdsError error = EdsGetDirectoryItemInfo(item, &info);
     const QString suffix = QFileInfo(QString::fromUtf8(info.szFileName)).suffix();
-    const QString filePath = pendingCaptureBase_ + '.' +
-                             (suffix.isEmpty() ? QString("jpg") : suffix.toLower());
+    const QString filePath =
+        pendingCaptureBase_ + '.' + (suffix.isEmpty() ? QString("jpg") : suffix.toLower());
     EdsStreamRef stream = nullptr;
     if (error == EDS_ERR_OK) {
       const QByteArray encodedPath = QFile::encodeName(filePath);
-      error = EdsCreateFileStream(
-          encodedPath.constData(), kEdsFileCreateDisposition_CreateAlways,
-          kEdsAccess_ReadWrite, &stream);
+      error = EdsCreateFileStream(encodedPath.constData(), kEdsFileCreateDisposition_CreateAlways,
+                                  kEdsAccess_ReadWrite, &stream);
     }
     if (error == EDS_ERR_OK) {
       error = EdsDownload(item, info.size, stream);
@@ -389,8 +467,7 @@ class CanonSession final : public CameraSession {
       emit captureCompleted(filePath);
     } else {
       QFile::remove(filePath);
-      emit errorOccurred("Could not download the Canon image: " +
-                         errorText(error));
+      emit errorOccurred("Could not download the Canon image: " + errorText(error));
     }
   }
 
@@ -402,10 +479,13 @@ class CanonSession final : public CameraSession {
   bool sdkInitialized_ = false;
   bool sessionOpen_ = false;
   bool liveViewStarted_ = false;
+  mutable bool depthOfFieldPreview_ = false;
+  bool externalFlash_ = false;
+  bool lvSimulation_ = true;
+  double exposurePreviewOffset_ = 0.0;
 };
 
 }  // namespace
-
 
 std::vector<CameraDevice> availableCanonCameras() {
   std::vector<CameraDevice> devices;
@@ -414,13 +494,11 @@ std::vector<CameraDevice> availableCanonCameras() {
   }
   EdsCameraListRef list = nullptr;
   EdsUInt32 count = 0;
-  if (EdsGetCameraList(&list) == EDS_ERR_OK &&
-      EdsGetChildCount(list, &count) == EDS_ERR_OK) {
+  if (EdsGetCameraList(&list) == EDS_ERR_OK && EdsGetChildCount(list, &count) == EDS_ERR_OK) {
     for (EdsUInt32 index = 0; index < count; ++index) {
       EdsCameraRef camera = nullptr;
       if (EdsGetChildAtIndex(list, static_cast<EdsInt32>(index),
-                             reinterpret_cast<EdsBaseRef*>(&camera)) !=
-          EDS_ERR_OK) {
+                             reinterpret_cast<EdsBaseRef*>(&camera)) != EDS_ERR_OK) {
         continue;
       }
       EdsDeviceInfo info{};
@@ -438,8 +516,6 @@ std::vector<CameraDevice> availableCanonCameras() {
   return devices;
 }
 
-
-std::unique_ptr<CameraSession> openCanonCamera(const CameraDevice& device,
-                                               QObject* parent) {
+std::unique_ptr<CameraSession> openCanonCamera(const CameraDevice& device, QObject* parent) {
   return std::make_unique<CanonSession>(device, parent);
 }

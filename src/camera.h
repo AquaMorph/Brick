@@ -3,7 +3,6 @@
 #include <QImage>
 #include <QObject>
 #include <QString>
-
 #include <memory>
 #include <vector>
 
@@ -18,7 +17,7 @@ struct CameraSettingChoice {
   QString label;
 };
 
-enum class CameraSettingType { Choice, IntegerRange, DecimalRange };
+enum class CameraSettingType { Choice, SteppedChoice, Toggle, IntegerRange, DecimalRange };
 
 struct CameraSetting {
   QString id;
@@ -31,6 +30,7 @@ struct CameraSetting {
   double step = 1.0;
   int decimals = 0;
   QString suffix;
+  QString group;
 };
 
 class CameraSession : public QObject {
@@ -59,5 +59,5 @@ class CameraSession : public QObject {
 };
 
 [[nodiscard]] std::vector<CameraDevice> availableCameras();
-[[nodiscard]] std::unique_ptr<CameraSession> openCamera(
-    const CameraDevice& device, QObject* parent = nullptr);
+[[nodiscard]] std::unique_ptr<CameraSession> openCamera(const CameraDevice& device,
+                                                        QObject* parent = nullptr);
