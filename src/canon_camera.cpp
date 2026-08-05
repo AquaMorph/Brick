@@ -21,6 +21,8 @@ QString errorText(EdsError error) {
 
 QString hexValue(EdsInt32 value) { return QString::number(static_cast<EdsUInt32>(value), 16); }
 
+bool isAutomaticIso(EdsInt32 value) { return value == 0x00 || value == 0x01; }
+
 QString canonLabel(EdsPropertyID property, EdsInt32 value) {
   static const std::map<EdsInt32, QString> iso = {
       {0x00, "Auto"},    {0x01, "Auto ISO"}, {0x28, "6"},       {0x30, "12"},
@@ -254,7 +256,39 @@ class CanonSession final : public CameraSession {
       setting.group = property.group;
       for (int index = 0; index < descriptor.numElements; ++index) {
         const EdsInt32 value = descriptor.propDesc[index];
+        if (property.id == kEdsPropID_ISOSpeed && isAutomaticIso(value)) {
+          continue;
+        }
         setting.choices.push_back({hexValue(value), canonLabel(property.id, value)});
+      }
+      if (property.id == kEdsPropID_ISOSpeed) {
+        const bool automatic = isAutomaticIso(current);
+        if (!automatic) {
+          manualIsoValue_ = static_cast<EdsUInt32>(current);
+        } else if (std::ranges::none_of(setting.choices, [this](const CameraSettingChoice& choice) {
+                     return choice.value.toUInt(nullptr, 16) == manualIsoValue_;
+                   }) &&
+                   !setting.choices.empty()) {
+          manualIsoValue_ = setting.choices.front().value.toUInt(nullptr, 16);
+        }
+        std::vector<CameraSettingChoice> modes;
+        const bool supportsAutomatic = std::any_of(
+            descriptor.propDesc, descriptor.propDesc + descriptor.numElements, isAutomaticIso);
+        if (supportsAutomatic) {
+          modes.push_back({"auto", "Auto"});
+        }
+        if (!setting.choices.empty()) {
+          modes.push_back({"manual", "Manual"});
+        }
+        CameraSetting mode{"isoMode", "ISO mode", automatic ? "auto" : "manual",
+                           std::move(modes)};
+        mode.group = property.group;
+        result.push_back(std::move(mode));
+        if (setting.choices.empty()) {
+          continue;
+        }
+        setting.value = hexValue(static_cast<EdsInt32>(manualIsoValue_));
+        setting.enabled = !automatic;
       }
       if (property.id == kEdsPropID_Tv) {
         std::ranges::sort(setting.choices, [](const CameraSettingChoice& left,
@@ -413,6 +447,56 @@ class CanonSession final : public CameraSession {
       emit settingsChanged();
       return;
     }
+    if (id == "isoMode") {
+      const bool automatic = value == "auto";
+      if (!automatic && value != "manual") {
+        emit errorOccurred("The ISO mode is invalid.");
+        return;
+      }
+      EdsPropertyDesc descriptor{};
+      if (EdsGetPropertyDesc(camera_, kEdsPropID_ISOSpeed, &descriptor) != EDS_ERR_OK ||
+          descriptor.numElements <= 0) {
+        emit errorOccurred("Could not read the available Canon ISO settings.");
+        return;
+      }
+      EdsUInt32 nativeValue = 0;
+      bool found = false;
+      const auto match = std::find_if(
+          descriptor.propDesc, descriptor.propDesc + descriptor.numElements,
+          [this, automatic](EdsInt32 candidate) {
+            return automatic ? isAutomaticIso(candidate)
+                             : static_cast<EdsUInt32>(candidate) == manualIsoValue_;
+          });
+      if (match != descriptor.propDesc + descriptor.numElements) {
+        nativeValue = static_cast<EdsUInt32>(*match);
+        found = true;
+      } else if (!automatic) {
+        const auto firstManual = std::find_if(
+            descriptor.propDesc, descriptor.propDesc + descriptor.numElements,
+            [](EdsInt32 candidate) { return !isAutomaticIso(candidate); });
+        if (firstManual != descriptor.propDesc + descriptor.numElements) {
+          nativeValue = static_cast<EdsUInt32>(*firstManual);
+          found = true;
+        }
+      }
+      if (!found ||
+          (automatic && !isAutomaticIso(static_cast<EdsInt32>(nativeValue))) ||
+          (!automatic && isAutomaticIso(static_cast<EdsInt32>(nativeValue)))) {
+        emit errorOccurred("The selected ISO mode is not available on this camera.");
+        return;
+      }
+      const EdsError error = EdsSetPropertyData(camera_, kEdsPropID_ISOSpeed, 0,
+                                                sizeof(nativeValue), &nativeValue);
+      if (error != EDS_ERR_OK) {
+        emit errorOccurred("Canon rejected the ISO mode: " + errorText(error));
+        return;
+      }
+      if (!automatic) {
+        manualIsoValue_ = nativeValue;
+      }
+      emit settingsChanged();
+      return;
+    }
     const auto property =
         std::find_if(kCanonProperties.begin(), kCanonProperties.end(),
                      [&id](const CanonProperty& candidate) { return id == candidate.key; });
@@ -427,6 +511,9 @@ class CanonSession final : public CameraSession {
     if (error != EDS_ERR_OK) {
       emit errorOccurred("Canon rejected the setting: " + errorText(error));
       return;
+    }
+    if (id == "iso") {
+      manualIsoValue_ = nativeValue;
     }
     emit settingsChanged();
   }
@@ -639,6 +726,7 @@ class CanonSession final : public CameraSession {
   bool externalFlash_ = false;
   bool lvSimulation_ = true;
   double exposurePreviewOffset_ = 0.0;
+  mutable EdsUInt32 manualIsoValue_ = 0x48;
 };
 
 }  // namespace

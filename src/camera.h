@@ -31,6 +31,7 @@ struct CameraSetting {
   int decimals = 0;
   QString suffix;
   QString group;
+  bool enabled = true;
 };
 
 class CameraSession : public QObject {

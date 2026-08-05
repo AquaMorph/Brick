@@ -322,6 +322,7 @@ void CinematographyWidget::rebuildSettings() {
       valueLabel->setText(setting.choices[selectedIndex].label);
       layout->addWidget(slider, 1);
       layout->addWidget(valueLabel);
+      control->setEnabled(setting.enabled);
       connect(slider, &QSlider::valueChanged, this,
               [this, id = setting.id, choices = setting.choices, valueLabel](int index) {
                 const auto& choice = choices[index];
