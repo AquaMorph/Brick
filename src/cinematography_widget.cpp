@@ -12,6 +12,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
@@ -24,6 +25,21 @@
 #include <cmath>
 
 namespace {
+
+class DoubleClickResetSlider final : public QSlider {
+ public:
+  DoubleClickResetSlider(Qt::Orientation orientation, int resetValue, QWidget* parent)
+      : QSlider(orientation, parent), resetValue_(resetValue) {}
+
+ protected:
+  void mouseDoubleClickEvent(QMouseEvent* event) override {
+    setValue(resetValue_);
+    event->accept();
+  }
+
+ private:
+  int resetValue_;
+};
 
 QString choiceLabel(const CameraSetting& setting, const QString& value) {
   if (setting.type != CameraSettingType::Choice &&
@@ -390,10 +406,15 @@ void CinematographyWidget::rebuildSettings() {
       auto* layout = new QHBoxLayout(control);
       layout->setContentsMargins(0, 0, 0, 0);
       layout->setSpacing(8);
-      auto* slider = new QSlider(Qt::Horizontal, control);
-      auto* spin = new QDoubleSpinBox(control);
       const double range = setting.maximum - setting.minimum;
       const int sliderSteps = std::max(1, static_cast<int>(std::round(range / setting.step)));
+      const int zeroPosition = range > 0
+                                   ? static_cast<int>(std::round(-setting.minimum / range * sliderSteps))
+                                   : 0;
+      QSlider* slider = setting.id == "exposurePreviewOffset"
+                            ? new DoubleClickResetSlider(Qt::Horizontal, zeroPosition, control)
+                            : new QSlider(Qt::Horizontal, control);
+      auto* spin = new QDoubleSpinBox(control);
       slider->setRange(0, sliderSteps);
       slider->setTracking(true);
       spin->setRange(setting.minimum, setting.maximum);
