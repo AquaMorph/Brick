@@ -28,6 +28,16 @@ struct TestShot {
   bool operator==(const TestShot&) const = default;
 };
 
+struct AnimationFrame {
+  int number = 0;
+  QString highResPath;
+  QString lowResPath;
+  QString rawPath;
+  QDateTime capturedUtc;
+
+  bool operator==(const AnimationFrame&) const = default;
+};
+
 class Project {
  public:
   struct ActiveTake {
@@ -52,10 +62,18 @@ class Project {
                                       QString* error = nullptr) const;
   [[nodiscard]] QString testShotDirectory(int sceneIndex, int shotIndex,
                                           QString* error = nullptr) const;
+  [[nodiscard]] QString takeDirectory(int sceneIndex, int shotIndex,
+                                      int takeIndex,
+                                      QString* error = nullptr) const;
   [[nodiscard]] std::optional<ShotCameraSettings> currentShotCameraSettings(
       int sceneIndex, int shotIndex, QString* error = nullptr) const;
   [[nodiscard]] std::vector<TestShot> testShots(
       int sceneIndex, int shotIndex, QString* error = nullptr) const;
+  [[nodiscard]] std::vector<AnimationFrame> frames(
+      int sceneIndex, int shotIndex, int takeIndex,
+      QString* error = nullptr) const;
+  [[nodiscard]] int takeFrameRate(int sceneIndex, int shotIndex, int takeIndex,
+                                  QString* error = nullptr) const;
 
   bool createScene(const QString& name, QString* error);
   bool renameScene(int index, const QString& name, QString* error);
@@ -81,6 +99,14 @@ class Project {
       const std::map<QString, QString>& displaySettings, QString* error);
   bool deleteTestShot(int sceneIndex, int shotIndex, const QString& fileName,
                       QString* error);
+  std::optional<AnimationFrame> importFrame(
+      int sceneIndex, int shotIndex, int takeIndex,
+      const QString& capturedImagePath, const QDateTime& capturedUtc,
+      QString* error);
+  bool deleteFrame(int sceneIndex, int shotIndex, int takeIndex, int number,
+                   QString* error);
+  bool saveTakeFrameRate(int sceneIndex, int shotIndex, int takeIndex,
+                         int framesPerSecond, QString* error);
 
  private:
   Project(QString name, QString directory, std::vector<QString> scenes = {},

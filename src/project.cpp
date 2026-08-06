@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QUuid>
@@ -19,6 +20,7 @@ constexpr int kSceneFormatVersion = 1;
 constexpr int kShotFormatVersion = 1;
 constexpr int kTakeFormatVersion = 1;
 constexpr int kTestShotFormatVersion = 1;
+constexpr int kAnimationFrameFormatVersion = 1;
 constexpr auto kConfigFileName = "project.conf";
 constexpr auto kSceneConfigFileName = "scene.conf";
 constexpr auto kShotConfigFileName = "shot.conf";
@@ -96,6 +98,18 @@ int testShotNumber(const QString& fileName) {
 
 QString testShotMetadataFileName(int number) {
   return QString("%1.conf").arg(number, 6, 10, QLatin1Char('0'));
+}
+
+QString frameBaseName(int number) {
+  return QString("%1").arg(number, 6, 10, QLatin1Char('0'));
+}
+
+bool isRawImageSuffix(const QString& suffix) {
+  static const QStringList rawSuffixes = {
+      "3fr", "arw", "cr2", "cr3", "dng", "erf", "iiq", "kdc",
+      "mef", "mos", "mrw", "nef", "nrw", "orf", "pef", "raf",
+      "raw", "rw2", "sr2", "srf", "x3f"};
+  return rawSuffixes.contains(suffix.toLower());
 }
 
 QString resolveTestsDirectory(QDir shot, bool create, QString* error) {
@@ -476,6 +490,20 @@ QString Project::testShotDirectory(int sceneIndex, int shotIndex,
 }
 
 
+QString Project::takeDirectory(int sceneIndex, int shotIndex, int takeIndex,
+                               QString* error) const {
+  const QString shotPath = shotDirectory(sceneIndex, shotIndex, error);
+  if (shotPath.isEmpty()) {
+    return {};
+  }
+  if (takeIndex < 0 || takeIndex >= takeCounts_[sceneIndex][shotIndex]) {
+    setError(error, "The selected take does not exist.");
+    return {};
+  }
+  return QDir(shotPath).filePath(directoryNameForTake(takeIndex));
+}
+
+
 std::optional<ShotCameraSettings> Project::currentShotCameraSettings(
     int sceneIndex, int shotIndex, QString* error) const {
   const QString path = shotDirectory(sceneIndex, shotIndex, error);
@@ -536,6 +564,70 @@ std::vector<TestShot> Project::testShots(int sceneIndex, int shotIndex,
     shots.push_back(std::move(shot));
   }
   return shots;
+}
+
+
+std::vector<AnimationFrame> Project::frames(int sceneIndex, int shotIndex,
+                                            int takeIndex,
+                                            QString* error) const {
+  const QString takePath = takeDirectory(sceneIndex, shotIndex, takeIndex, error);
+  if (takePath.isEmpty()) {
+    return {};
+  }
+
+  const QDir highRes(QDir(takePath).filePath("frames/preview/high_res"));
+  const QStringList files = highRes.entryList(
+      {"??????.jpg"}, QDir::Files | QDir::NoDotAndDotDot, QDir::Name);
+  std::vector<AnimationFrame> result;
+  result.reserve(files.size());
+  for (const QString& fileName : files) {
+    bool validNumber = false;
+    const int number = QFileInfo(fileName).completeBaseName().toInt(&validNumber);
+    if (!validNumber || number <= 0) {
+      continue;
+    }
+    AnimationFrame frame;
+    frame.number = number;
+    frame.highResPath = highRes.filePath(fileName);
+    const QString lowResPath = QDir(takePath).filePath(
+        "frames/preview/low_res/" + fileName);
+    frame.lowResPath = QFileInfo::exists(lowResPath) ? lowResPath : frame.highResPath;
+
+    const QDir rawDirectory(QDir(takePath).filePath("frames/RAW"));
+    const QStringList rawFiles = rawDirectory.entryList(
+        {frameBaseName(number) + ".*"}, QDir::Files | QDir::NoDotAndDotDot,
+        QDir::Name);
+    if (!rawFiles.isEmpty()) {
+      frame.rawPath = rawDirectory.filePath(rawFiles.front());
+    }
+    QSettings metadata(
+        QDir(takePath).filePath("frames/" + frameBaseName(number) + ".conf"),
+        QSettings::IniFormat);
+    if (metadata.value("Frame/formatVersion").toInt() ==
+        kAnimationFrameFormatVersion) {
+      frame.capturedUtc = QDateTime::fromString(
+          metadata.value("Frame/capturedUtc").toString(), Qt::ISODate);
+    }
+    result.push_back(std::move(frame));
+  }
+  return result;
+}
+
+
+int Project::takeFrameRate(int sceneIndex, int shotIndex, int takeIndex,
+                           QString* error) const {
+  const QString path = takeDirectory(sceneIndex, shotIndex, takeIndex, error);
+  if (path.isEmpty()) {
+    return 12;
+  }
+  QSettings config(QDir(path).filePath(kTakeConfigFileName),
+                   QSettings::IniFormat);
+  const int frameRate = config.value("Take/framesPerSecond", 12).toInt();
+  if (config.status() != QSettings::NoError) {
+    setError(error, "Brick could not read the take frame rate.");
+    return 12;
+  }
+  return std::clamp(frameRate, 1, 60);
 }
 
 
@@ -695,6 +787,171 @@ bool Project::deleteTestShot(int sceneIndex, int shotIndex,
   // up later without making a successfully deleted test shot reappear.
   tests.remove(imageTombstone);
   tests.remove(metadataTombstone);
+  return true;
+}
+
+
+std::optional<AnimationFrame> Project::importFrame(
+    int sceneIndex, int shotIndex, int takeIndex,
+    const QString& capturedImagePath, const QDateTime& capturedUtc,
+    QString* error) {
+  const QFileInfo source(capturedImagePath);
+  if (!source.exists() || !source.isFile()) {
+    setError(error, "The captured frame image does not exist.");
+    return std::nullopt;
+  }
+  if (!capturedUtc.isValid()) {
+    setError(error, "The frame capture time is invalid.");
+    return std::nullopt;
+  }
+  const QImage image(capturedImagePath);
+  if (image.isNull()) {
+    setError(error, "Brick could not decode the captured frame image.");
+    return std::nullopt;
+  }
+  const QString takePath = takeDirectory(sceneIndex, shotIndex, takeIndex, error);
+  if (takePath.isEmpty()) {
+    return std::nullopt;
+  }
+
+  const auto existingFrames = frames(sceneIndex, shotIndex, takeIndex, error);
+  int largestNumber = 0;
+  for (const AnimationFrame& frame : existingFrames) {
+    largestNumber = std::max(largestNumber, frame.number);
+  }
+  QSettings takeConfig(QDir(takePath).filePath(kTakeConfigFileName),
+                       QSettings::IniFormat);
+  const int number = std::max(
+      largestNumber + 1, takeConfig.value("Take/nextFrameNumber", 1).toInt());
+  if (number > 999999) {
+    setError(error, "A take cannot contain more frame numbers.");
+    return std::nullopt;
+  }
+
+  const QString baseName = frameBaseName(number);
+  const QString highResPath = QDir(takePath).filePath(
+      "frames/preview/high_res/" + baseName + ".jpg");
+  const QString lowResPath = QDir(takePath).filePath(
+      "frames/preview/low_res/" + baseName + ".jpg");
+  if (!image.save(highResPath, "JPG", 95)) {
+    setError(error, "Brick could not save the high-resolution frame preview.");
+    return std::nullopt;
+  }
+  const QImage lowRes = image.scaled(640, 360, Qt::KeepAspectRatio,
+                                     Qt::SmoothTransformation);
+  if (!lowRes.save(lowResPath, "JPG", 82)) {
+    QFile::remove(highResPath);
+    setError(error, "Brick could not save the low-resolution frame preview.");
+    return std::nullopt;
+  }
+
+  QString rawPath;
+  if (isRawImageSuffix(source.suffix())) {
+    rawPath = QDir(takePath).filePath("frames/RAW/" + baseName + '.' +
+                                      source.suffix().toLower());
+    if (!QFile::copy(capturedImagePath, rawPath)) {
+      QFile::remove(highResPath);
+      QFile::remove(lowResPath);
+      setError(error, "Brick could not save the RAW frame.");
+      return std::nullopt;
+    }
+  }
+
+  const QString metadataPath =
+      QDir(takePath).filePath("frames/" + baseName + ".conf");
+  QSettings metadata(metadataPath, QSettings::IniFormat);
+  metadata.setValue("Frame/formatVersion", kAnimationFrameFormatVersion);
+  metadata.setValue("Frame/capturedUtc",
+                    capturedUtc.toUTC().toString(Qt::ISODateWithMs));
+  metadata.sync();
+  if (metadata.status() != QSettings::NoError) {
+    QFile::remove(highResPath);
+    QFile::remove(lowResPath);
+    QFile::remove(rawPath);
+    QFile::remove(metadataPath);
+    setError(error, "Brick could not save frame metadata.");
+    return std::nullopt;
+  }
+  takeConfig.setValue("Take/nextFrameNumber", number + 1);
+  takeConfig.sync();
+  if (takeConfig.status() != QSettings::NoError) {
+    QFile::remove(highResPath);
+    QFile::remove(lowResPath);
+    QFile::remove(rawPath);
+    QFile::remove(metadataPath);
+    setError(error, "Brick could not update the next frame number.");
+    return std::nullopt;
+  }
+  return AnimationFrame{number, highResPath, lowResPath, rawPath,
+                        capturedUtc.toUTC()};
+}
+
+
+bool Project::deleteFrame(int sceneIndex, int shotIndex, int takeIndex,
+                          int number, QString* error) {
+  const QString takePath = takeDirectory(sceneIndex, shotIndex, takeIndex, error);
+  if (takePath.isEmpty() || number <= 0 || number > 999999) {
+    if (number <= 0 || number > 999999) {
+      setError(error, "The selected frame does not exist.");
+    }
+    return false;
+  }
+  const auto takeFrames = frames(sceneIndex, shotIndex, takeIndex, error);
+  const auto frame = std::find_if(
+      takeFrames.begin(), takeFrames.end(),
+      [number](const AnimationFrame& candidate) { return candidate.number == number; });
+  if (frame == takeFrames.end()) {
+    setError(error, "The selected frame does not exist.");
+    return false;
+  }
+
+  const QString token = ".brick-frame-delete-" +
+                        QUuid::createUuid().toString(QUuid::Id128);
+  const QStringList paths = {
+      frame->highResPath, frame->lowResPath, frame->rawPath,
+      QDir(takePath).filePath("frames/" + frameBaseName(number) + ".conf")};
+  std::vector<std::pair<QString, QString>> renamed;
+  for (const QString& path : paths) {
+    if (path.isEmpty() || !QFileInfo::exists(path)) {
+      continue;
+    }
+    const QString tombstone = QFileInfo(path).dir().filePath(
+        token + '-' + QString::number(renamed.size()));
+    if (!QFile::rename(path, tombstone)) {
+      for (auto entry = renamed.rbegin(); entry != renamed.rend(); ++entry) {
+        QFile::rename(entry->second, entry->first);
+      }
+      setError(error, "Brick could not prepare the frame for deletion.");
+      return false;
+    }
+    renamed.emplace_back(path, tombstone);
+  }
+  for (const auto& [original, tombstone] : renamed) {
+    Q_UNUSED(original);
+    QFile::remove(tombstone);
+  }
+  return true;
+}
+
+
+bool Project::saveTakeFrameRate(int sceneIndex, int shotIndex, int takeIndex,
+                                int framesPerSecond, QString* error) {
+  if (framesPerSecond < 1 || framesPerSecond > 60) {
+    setError(error, "The take frame rate must be between 1 and 60 FPS.");
+    return false;
+  }
+  const QString path = takeDirectory(sceneIndex, shotIndex, takeIndex, error);
+  if (path.isEmpty()) {
+    return false;
+  }
+  QSettings config(QDir(path).filePath(kTakeConfigFileName),
+                   QSettings::IniFormat);
+  config.setValue("Take/framesPerSecond", framesPerSecond);
+  config.sync();
+  if (config.status() != QSettings::NoError) {
+    setError(error, "Brick could not save the take frame rate.");
+    return false;
+  }
   return true;
 }
 

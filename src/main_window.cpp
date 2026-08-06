@@ -1,5 +1,6 @@
 #include "main_window.h"
 
+#include "animation_widget.h"
 #include "cinematography_widget.h"
 
 #include <QAction>
@@ -242,24 +243,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   connect(takeList_, &QListWidget::currentRowChanged, this,
           [this] { updateTakeActions(); });
 
-  auto createTakeTab = [tabs, &headingFont](const QString& heading,
-                                            QLabel** takeLabel) {
-    auto* tab = new QWidget(tabs);
-    auto* layout = new QVBoxLayout(tab);
-    layout->setContentsMargins(24, 24, 24, 24);
-    auto* title = new QLabel(heading, tab);
-    title->setFont(headingFont);
-    layout->addWidget(title);
-    *takeLabel = new QLabel("No active take selected", tab);
-    layout->addWidget(*takeLabel);
-    layout->addStretch();
-    return tab;
-  };
-
   tabs->addTab(directTab, "Direct");
   cinematographyWidget_ = new CinematographyWidget(tabs);
   tabs->addTab(cinematographyWidget_, "Cinematography");
-  tabs->addTab(createTakeTab("Animation", &animationTakeLabel_), "Animation");
+  animationWidget_ = new AnimationWidget(cinematographyWidget_, tabs);
+  tabs->addTab(animationWidget_, "Animation");
   setCentralWidget(tabs);
 
   updateSceneActions();
@@ -368,6 +356,7 @@ void MainWindow::renameScene() {
     return;
   }
   refreshScenes(row);
+  updateActiveTakeViews();
 }
 
 
@@ -489,6 +478,7 @@ void MainWindow::renameShot() {
     return;
   }
   refreshShots(shotRow);
+  updateActiveTakeViews();
 }
 
 
@@ -670,17 +660,9 @@ void MainWindow::updateTakeActions() {
 
 
 void MainWindow::updateActiveTakeViews() {
-  QString text = "No active take selected";
-  if (project_.has_value() && project_->activeTake().has_value()) {
-    const auto& active = *project_->activeTake();
-    text = QString("Scene %1: %2  /  Shot %3: %4  /  Take %5")
-               .arg(active.sceneIndex + 1, 4, 10, QLatin1Char('0'))
-               .arg(project_->scenes()[active.sceneIndex])
-               .arg(active.shotIndex + 1, 4, 10, QLatin1Char('0'))
-               .arg(project_->shots(active.sceneIndex)[active.shotIndex])
-               .arg(active.takeIndex + 1, 4, 10, QLatin1Char('0'));
-  }
-  animationTakeLabel_->setText(text);
+  animationWidget_->setActiveTake(project_ ? &*project_ : nullptr,
+                                  project_ ? project_->activeTake()
+                                           : std::nullopt);
 }
 
 

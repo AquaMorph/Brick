@@ -26,6 +26,8 @@ qt_add_executable(brick
   src/main.cpp
   src/main_window.cpp
   src/main_window.h
+  src/animation_widget.cpp
+  src/animation_widget.h
   src/camera.cpp
   src/camera.h
   src/cinematography_widget.cpp
@@ -109,6 +111,6 @@ if(BUILD_TESTING)
     src/project.h
   )
   target_include_directories(project_tests PRIVATE src)
-  target_link_libraries(project_tests PRIVATE Qt6::Core)
+  target_link_libraries(project_tests PRIVATE Qt6::Core Qt6::Gui)
   add_test(NAME project_tests COMMAND project_tests)
 endif()

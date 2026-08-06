@@ -10,6 +10,7 @@ class QListWidget;
 class QLabel;
 class QPushButton;
 class CinematographyWidget;
+class AnimationWidget;
 
 class MainWindow : public QMainWindow {
  public:
@@ -58,5 +59,5 @@ class MainWindow : public QMainWindow {
   QPushButton* deleteTakeButton_ = nullptr;
   QPushButton* selectTakeButton_ = nullptr;
   CinematographyWidget* cinematographyWidget_ = nullptr;
-  QLabel* animationTakeLabel_ = nullptr;
+  AnimationWidget* animationWidget_ = nullptr;
 };

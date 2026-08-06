@@ -194,8 +194,8 @@ CinematographyWidget::CinematographyWidget(QWidget* parent) : QWidget(parent) {
   cameraCombo_->setObjectName("cameraSelector");
   auto* cameraSelection = new QHBoxLayout;
   cameraSelection->addWidget(cameraCombo_, 1);
-  auto* refreshButton = new QPushButton("Refresh", sidebar);
-  cameraSelection->addWidget(refreshButton);
+  cameraRefreshButton_ = new QPushButton("Refresh", sidebar);
+  cameraSelection->addWidget(cameraRefreshButton_);
   sidebarLayout->addLayout(cameraSelection);
 
   auto* settingsTitle = new QLabel("Camera settings", sidebar);
@@ -241,7 +241,8 @@ CinematographyWidget::CinematographyWidget(QWidget* parent) : QWidget(parent) {
 
   connect(cameraCombo_, &QComboBox::currentIndexChanged, this,
           [this](int index) { selectCamera(index); });
-  connect(refreshButton, &QPushButton::clicked, this, [this] { refreshCameras(); });
+  connect(cameraRefreshButton_, &QPushButton::clicked, this,
+          [this] { refreshCameras(); });
   connect(captureButton_, &QPushButton::clicked, this, [this] { capture(); });
   connect(liveButton_, &QPushButton::clicked, this, [this] { showLiveView(); });
   connect(gallery_, &QListWidget::currentRowChanged, this, [this](int row) { showTestShot(row); });
@@ -268,9 +269,22 @@ void CinematographyWidget::setShot(Project* project, int sceneIndex, int shotInd
                           .arg(sceneIndex_ + 1, 4, 10, QLatin1Char('0'))
                           .arg(shotIndex_ + 1, 4, 10, QLatin1Char('0'))
                           .arg(project_->shots(sceneIndex_)[shotIndex_]));
-  captureButton_->setEnabled(camera_ != nullptr);
+  captureButton_->setEnabled(camera_ != nullptr && !externalCaptureActive_ &&
+                             !pendingCapture_.has_value());
   refreshGallery();
   restoreShotSettings();
+}
+
+CameraSession* CinematographyWidget::cameraSession() const {
+  return camera_.get();
+}
+
+void CinematographyWidget::setExternalCaptureActive(bool active) {
+  externalCaptureActive_ = active;
+  cameraCombo_->setEnabled(!active);
+  cameraRefreshButton_->setEnabled(!active);
+  captureButton_->setEnabled(!active && project_ != nullptr && camera_ != nullptr &&
+                             shotIndex_ >= 0 && !pendingCapture_.has_value());
 }
 
 void CinematographyWidget::refreshCameras() {
@@ -278,7 +292,12 @@ void CinematographyWidget::refreshCameras() {
   clearError();
   const QString previousBackend = camera_ ? camera_->backend() : QString{};
   const QString previousId = camera_ ? camera_->deviceId() : QString{};
+  if (pendingCapture_.has_value()) {
+    pendingCapture_.reset();
+    emit captureStateChanged(false);
+  }
   if (camera_) {
+    emit cameraChanged(nullptr);
     camera_->stop();
     camera_.reset();
   }
@@ -304,6 +323,7 @@ void CinematographyWidget::selectCamera(int index) {
   setOperationStatus({});
   clearError();
   if (camera_) {
+    emit cameraChanged(nullptr);
     camera_->stop();
     camera_.reset();
   }
@@ -334,7 +354,13 @@ void CinematographyWidget::selectCamera(int index) {
   connect(camera_.get(), &CameraSession::captureCompleted, this,
           [this](const QString& path) { importCapture(path); });
   connect(camera_.get(), &CameraSession::errorOccurred, this,
-          [this](const QString& message) { showError(message); });
+           [this](const QString& message) {
+             if (pendingCapture_.has_value()) {
+               pendingCapture_.reset();
+               emit captureStateChanged(false);
+             }
+             showError(message);
+           });
   camera_->start();
   if (!camera_->isReady()) {
     camera_.reset();
@@ -344,8 +370,10 @@ void CinematographyWidget::selectCamera(int index) {
     setConnectionStatus(devices_[index - 1].displayName + "  ·  Connection failed", false);
     return;
   }
+  emit cameraChanged(camera_.get());
   setConnectionStatus(camera_->displayName(), true);
-  captureButton_->setEnabled(project_ != nullptr && shotIndex_ >= 0);
+  captureButton_->setEnabled(project_ != nullptr && shotIndex_ >= 0 &&
+                             !externalCaptureActive_);
   rebuildSettings();
   saveCameraSettings();
   showLiveView();
@@ -583,13 +611,15 @@ void CinematographyWidget::capture() {
     showError("Brick could not create temporary capture storage.");
     return;
   }
-  if (project_ == nullptr || camera_ == nullptr || shotIndex_ < 0) {
+  if (project_ == nullptr || camera_ == nullptr || shotIndex_ < 0 ||
+      pendingCapture_.has_value() || externalCaptureActive_) {
     return;
   }
   clearError();
   showLiveView();
   captureButton_->setEnabled(false);
   cameraCombo_->setEnabled(false);
+  cameraRefreshButton_->setEnabled(false);
   setOperationStatus("Capturing...");
   QString error;
   const QString shotDirectory = project_->shotDirectory(sceneIndex_, shotIndex_, &error);
@@ -600,20 +630,22 @@ void CinematographyWidget::capture() {
   pendingCapture_ = PendingCapture{
       project_,   project_->directory(),  shotDirectory,           sceneIndex_,
       shotIndex_, camera_->displayName(), currentCameraSettings(), currentDisplaySettings()};
+  emit captureStateChanged(true);
   const QString base =
       captureDirectory_.filePath("capture-" + QString::number(QDateTime::currentMSecsSinceEpoch()));
   camera_->capture(base);
 }
 
 void CinematographyWidget::importCapture(const QString& filePath) {
-  captureButton_->setEnabled(true);
-  cameraCombo_->setEnabled(true);
   if (!pendingCapture_.has_value()) {
-    showError("A camera returned an image without an active capture.");
     return;
   }
   const PendingCapture capture = std::move(*pendingCapture_);
   pendingCapture_.reset();
+  emit captureStateChanged(false);
+  captureButton_->setEnabled(true);
+  cameraCombo_->setEnabled(!externalCaptureActive_);
+  cameraRefreshButton_->setEnabled(!externalCaptureActive_);
   QString error;
   if (project_ != capture.project || project_->directory() != capture.projectDirectory ||
       project_->shotDirectory(capture.sceneIndex, capture.shotIndex, &error) !=
@@ -811,8 +843,13 @@ void CinematographyWidget::clearError() {
 }
 
 void CinematographyWidget::showError(const QString& message) {
-  captureButton_->setEnabled(project_ != nullptr && camera_ != nullptr);
-  cameraCombo_->setEnabled(true);
+  captureButton_->setEnabled(project_ != nullptr && camera_ != nullptr &&
+                             !externalCaptureActive_ &&
+                             !pendingCapture_.has_value());
+  cameraCombo_->setEnabled(!externalCaptureActive_ &&
+                           !pendingCapture_.has_value());
+  cameraRefreshButton_->setEnabled(!externalCaptureActive_ &&
+                                   !pendingCapture_.has_value());
   setOperationStatus({});
   errorLabel_->setText(message);
   errorLabel_->setVisible(true);

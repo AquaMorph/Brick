@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QImage>
 #include <QSettings>
 #include <QTemporaryDir>
 
@@ -281,6 +282,53 @@ int main(int argc, char* argv[]) {
         shotConfig.value("FutureFeature/unknownValue").toString() == "keep me",
         "Test shot updates removed unknown shot.conf data.");
   }
+
+  const QString frameSource =
+      QDir(temporaryDirectory.path()).filePath("captured-frame.png");
+  QImage frameImage(1280, 720, QImage::Format_RGB32);
+  frameImage.fill(QColor("#b34235"));
+  passed &= expect(frameImage.save(frameSource),
+                   "Could not create a captured frame fixture.");
+  const auto firstFrame = created->importFrame(
+      0, 0, 0, frameSource, firstCapture, &error);
+  const auto secondFrame = created->importFrame(
+      0, 0, 0, frameSource, secondCapture, &error);
+  passed &= expect(
+      firstFrame.has_value() && firstFrame->number == 1 &&
+          QFile::exists(firstFrame->highResPath) &&
+          QFile::exists(firstFrame->lowResPath) &&
+          secondFrame.has_value() && secondFrame->number == 2,
+      "Animation frames were not imported with both preview sizes.");
+  passed &= expect(created->saveTakeFrameRate(0, 0, 0, 24, &error) &&
+                       created->takeFrameRate(0, 0, 0, &error) == 24,
+                   "The take frame rate was not saved.");
+  passed &= expect(!created->saveTakeFrameRate(0, 0, 0, 0, &error),
+                   "An invalid take frame rate was accepted.");
+  passed &= expect(created->deleteFrame(0, 0, 0, 1, &error),
+                   "An animation frame could not be deleted.");
+  passed &= expect(!created->deleteFrame(0, 0, 0, 1, &error),
+                   "A missing animation frame could be deleted twice.");
+  const auto thirdFrame = created->importFrame(
+      0, 0, 0, frameSource, firstCapture, &error);
+  passed &= expect(thirdFrame.has_value() && thirdFrame->number == 3,
+                   "Animation frame numbering reused a deleted number.");
+  const auto restoredFrames = created->frames(0, 0, 0, &error);
+  passed &= expect(restoredFrames.size() == 2 &&
+                       restoredFrames[0].number == 2 &&
+                       restoredFrames[0].capturedUtc == secondCapture &&
+                       restoredFrames[1].number == 3,
+                   "Animation frame metadata was not restored.");
+  passed &= expect(created->deleteFrame(0, 0, 0, 3, &error),
+                   "The newest animation frame could not be deleted.");
+  const auto fourthFrame = created->importFrame(
+      0, 0, 0, frameSource, firstCapture, &error);
+  passed &= expect(fourthFrame.has_value() && fourthFrame->number == 4,
+                   "Animation frame numbering reused the newest deleted number.");
+  opened = Project::open(projectPath, &error);
+  passed &= expect(opened.has_value() &&
+                       opened->frames(0, 0, 0, &error).size() == 2 &&
+                       opened->takeFrameRate(0, 0, 0, &error) == 24,
+                   "Animation take settings did not survive reopening.");
 
   passed &= expect(created->createTake(0, 0, &error),
                    "A second take was not created.");

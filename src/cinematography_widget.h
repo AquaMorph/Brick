@@ -20,10 +20,18 @@ class QScrollArea;
 class QVBoxLayout;
 
 class CinematographyWidget : public QWidget {
+  Q_OBJECT
+
  public:
   explicit CinematographyWidget(QWidget* parent = nullptr);
 
   void setShot(Project* project, int sceneIndex, int shotIndex);
+  [[nodiscard]] CameraSession* cameraSession() const;
+  void setExternalCaptureActive(bool active);
+
+ signals:
+  void cameraChanged(CameraSession* camera);
+  void captureStateChanged(bool capturing);
 
  private:
   struct PendingCapture {
@@ -68,6 +76,7 @@ class CinematographyWidget : public QWidget {
   std::vector<CameraSetting> settings_;
   std::vector<TestShot> testShots_;
   std::optional<PendingCapture> pendingCapture_;
+  bool externalCaptureActive_ = false;
   quint64 previewLoadId_ = 0;
   QImage previewImage_;
   QTemporaryDir captureDirectory_;
@@ -79,6 +88,7 @@ class CinematographyWidget : public QWidget {
   QLabel* errorLabel_ = nullptr;
   QLabel* galleryStatusLabel_ = nullptr;
   QComboBox* cameraCombo_ = nullptr;
+  QPushButton* cameraRefreshButton_ = nullptr;
   QPushButton* captureButton_ = nullptr;
   QPushButton* liveButton_ = nullptr;
   QFormLayout* settingsLayout_ = nullptr;
