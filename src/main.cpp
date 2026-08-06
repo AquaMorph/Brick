@@ -57,8 +57,30 @@ int main(int argc, char* argv[]) {
     }
 
     QLabel#cinematographyShotLabel,
-    QLabel#cameraStatus {
+    QLabel#galleryStatus,
+    QLabel#cameraOperationStatus {
       color: #999999;
+    }
+
+    QLabel#cameraConnectionStatus {
+      padding: 4px 9px;
+      border: 1px solid #343434;
+      border-radius: 3px;
+      background-color: #151515;
+      color: #8b8b8b;
+    }
+
+    QLabel#cameraConnectionStatus[connected="true"] {
+      border-color: #67221d;
+      background-color: #21110f;
+      color: #e4c0bc;
+    }
+
+    QLabel#cameraErrorStatus {
+      padding: 7px 9px;
+      border-left: 3px solid #a23b31;
+      background-color: #241210;
+      color: #efc3be;
     }
 
     QListWidget#testShotGallery {

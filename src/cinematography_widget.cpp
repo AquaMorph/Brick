@@ -123,7 +123,12 @@ CinematographyWidget::CinematographyWidget(QWidget* parent) : QWidget(parent) {
   header->addSpacing(14);
   header->addWidget(shotLabel_);
   header->addStretch();
-  liveButton_ = new QPushButton("Live view", this);
+  connectionStatusLabel_ = new QLabel("Disconnected  ·  No camera selected", this);
+  connectionStatusLabel_->setObjectName("cameraConnectionStatus");
+  connectionStatusLabel_->setProperty("connected", false);
+  header->addWidget(connectionStatusLabel_);
+  header->addSpacing(10);
+  liveButton_ = new QPushButton("Return to live", this);
   liveButton_->setEnabled(false);
   header->addWidget(liveButton_);
   root->addLayout(header);
@@ -139,16 +144,27 @@ CinematographyWidget::CinematographyWidget(QWidget* parent) : QWidget(parent) {
   previewLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   imageColumn->addWidget(previewLabel_, 4);
 
+  operationStatusLabel_ = new QLabel(this);
+  operationStatusLabel_->setObjectName("cameraOperationStatus");
+  operationStatusLabel_->setVisible(false);
+  imageColumn->addWidget(operationStatusLabel_);
+
+  errorLabel_ = new QLabel(this);
+  errorLabel_->setObjectName("cameraErrorStatus");
+  errorLabel_->setWordWrap(true);
+  errorLabel_->setVisible(false);
+  imageColumn->addWidget(errorLabel_);
+
   auto* galleryHeader = new QHBoxLayout;
   auto* galleryTitle = new QLabel("Test images", this);
   QFont sectionFont = galleryTitle->font();
   sectionFont.setBold(true);
   galleryTitle->setFont(sectionFont);
-  statusLabel_ = new QLabel("No shot selected", this);
-  statusLabel_->setObjectName("cameraStatus");
+  galleryStatusLabel_ = new QLabel("No shot selected", this);
+  galleryStatusLabel_->setObjectName("galleryStatus");
   galleryHeader->addWidget(galleryTitle);
   galleryHeader->addStretch();
-  galleryHeader->addWidget(statusLabel_);
+  galleryHeader->addWidget(galleryStatusLabel_);
   imageColumn->addLayout(galleryHeader);
 
   gallery_ = new QListWidget(this);
@@ -189,9 +205,11 @@ CinematographyWidget::CinematographyWidget(QWidget* parent) : QWidget(parent) {
   settingsLayout_ = new QFormLayout(settingsWidget);
   settingsLayout_->setContentsMargins(0, 0, 0, 0);
   settingsLayout_->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+  settingsLayout_->setRowWrapPolicy(QFormLayout::WrapLongRows);
   auto* settingsScroll = new QScrollArea(sidebar);
   settingsScroll->setWidgetResizable(true);
   settingsScroll->setFrameShape(QFrame::NoFrame);
+  settingsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   settingsScroll->setWidget(settingsWidget);
   sidebarLayout->addWidget(settingsScroll, 1);
 
@@ -238,6 +256,8 @@ void CinematographyWidget::setShot(Project* project, int sceneIndex, int shotInd
   project_ = project;
   sceneIndex_ = sceneIndex;
   shotIndex_ = shotIndex;
+  setOperationStatus({});
+  clearError();
   if (project_ == nullptr || sceneIndex_ < 0 || shotIndex_ < 0) {
     shotLabel_->setText("Select a shot in Direct");
     captureButton_->setEnabled(false);
@@ -254,6 +274,8 @@ void CinematographyWidget::setShot(Project* project, int sceneIndex, int shotInd
 }
 
 void CinematographyWidget::refreshCameras() {
+  setOperationStatus("Refreshing cameras...");
+  clearError();
   const QString previousBackend = camera_ ? camera_->backend() : QString{};
   const QString previousId = camera_ ? camera_->deviceId() : QString{};
   if (camera_) {
@@ -275,9 +297,12 @@ void CinematographyWidget::refreshCameras() {
   }
   cameraCombo_->setCurrentIndex(selected);
   selectCamera(selected);
+  setOperationStatus({});
 }
 
 void CinematographyWidget::selectCamera(int index) {
+  setOperationStatus({});
+  clearError();
   if (camera_) {
     camera_->stop();
     camera_.reset();
@@ -288,13 +313,14 @@ void CinematographyWidget::selectCamera(int index) {
     captureButton_->setEnabled(false);
     liveButton_->setEnabled(false);
     setLivePreview(false);
-    statusLabel_->setText(devices_.empty() ? "No cameras found" : "Camera off");
+    setConnectionStatus(devices_.empty() ? "No cameras found" : "No camera selected", false);
     updatePreview({}, "Connect or select a camera");
     return;
   }
 
   camera_ = openCamera(devices_[index - 1], this);
   if (!camera_) {
+    setConnectionStatus(devices_[index - 1].displayName + "  ·  Connection failed", false);
     showError("Brick could not open the selected camera.");
     return;
   }
@@ -315,11 +341,11 @@ void CinematographyWidget::selectCamera(int index) {
     rebuildSettings();
     captureButton_->setEnabled(false);
     liveButton_->setEnabled(false);
+    setConnectionStatus(devices_[index - 1].displayName + "  ·  Connection failed", false);
     return;
   }
-  statusLabel_->setText(camera_->displayName());
+  setConnectionStatus(camera_->displayName(), true);
   captureButton_->setEnabled(project_ != nullptr && shotIndex_ >= 0);
-  liveButton_->setEnabled(true);
   rebuildSettings();
   saveCameraSettings();
   showLiveView();
@@ -560,10 +586,11 @@ void CinematographyWidget::capture() {
   if (project_ == nullptr || camera_ == nullptr || shotIndex_ < 0) {
     return;
   }
+  clearError();
   showLiveView();
   captureButton_->setEnabled(false);
   cameraCombo_->setEnabled(false);
-  statusLabel_->setText("Capturing…");
+  setOperationStatus("Capturing...");
   QString error;
   const QString shotDirectory = project_->shotDirectory(sceneIndex_, shotIndex_, &error);
   if (shotDirectory.isEmpty()) {
@@ -606,7 +633,8 @@ void CinematographyWidget::importCapture(const QString& filePath) {
     return;
   }
   QFile::remove(filePath);
-  statusLabel_->setText("Captured " + imported->fileName);
+  clearError();
+  setOperationStatus("Captured " + imported->fileName);
   refreshGallery(imported->fileName);
 }
 
@@ -617,7 +645,7 @@ void CinematographyWidget::refreshGallery(const QString& selectedFileName) {
   restoreButton_->setEnabled(false);
   deleteButton_->setEnabled(false);
   if (project_ == nullptr || sceneIndex_ < 0 || shotIndex_ < 0) {
-    statusLabel_->setText("No shot selected");
+    galleryStatusLabel_->setText("No shot selected");
     return;
   }
   QString error;
@@ -634,9 +662,9 @@ void CinematographyWidget::refreshGallery(const QString& selectedFileName) {
   if (!error.isEmpty()) {
     showError(error);
   } else if (testShots_.empty()) {
-    statusLabel_->setText("No test images for this shot");
+    galleryStatusLabel_->setText("No test images for this shot");
   } else {
-    statusLabel_->setText(
+    galleryStatusLabel_->setText(
         QString("%1 test image%2").arg(testShots_.size()).arg(testShots_.size() == 1 ? "" : "s"));
   }
 }
@@ -687,6 +715,7 @@ void CinematographyWidget::showLiveView() {
 }
 
 void CinematographyWidget::setLivePreview(bool live) {
+  liveButton_->setEnabled(!live && camera_ != nullptr);
   previewLabel_->setProperty("live", live);
   previewLabel_->style()->unpolish(previewLabel_);
   previewLabel_->style()->polish(previewLabel_);
@@ -736,7 +765,8 @@ void CinematographyWidget::restoreSelectedTestShotSettings() {
   }
   rebuildSettings();
   saveCameraSettings();
-  statusLabel_->setText("Restored settings from " + shot.fileName);
+  clearError();
+  setOperationStatus("Restored settings from " + shot.fileName);
 }
 
 ShotCameraSettings CinematographyWidget::currentCameraSettings() const {
@@ -763,9 +793,29 @@ std::map<QString, QString> CinematographyWidget::currentDisplaySettings() const 
   return result;
 }
 
+void CinematographyWidget::setConnectionStatus(const QString& text, bool connected) {
+  connectionStatusLabel_->setText((connected ? "Connected  ·  " : "Disconnected  ·  ") + text);
+  connectionStatusLabel_->setProperty("connected", connected);
+  connectionStatusLabel_->style()->unpolish(connectionStatusLabel_);
+  connectionStatusLabel_->style()->polish(connectionStatusLabel_);
+}
+
+void CinematographyWidget::setOperationStatus(const QString& text) {
+  operationStatusLabel_->setText(text);
+  operationStatusLabel_->setVisible(!text.isEmpty());
+}
+
+void CinematographyWidget::clearError() {
+  errorLabel_->clear();
+  errorLabel_->setVisible(false);
+}
+
 void CinematographyWidget::showError(const QString& message) {
   captureButton_->setEnabled(project_ != nullptr && camera_ != nullptr);
-  statusLabel_->setText(message);
+  cameraCombo_->setEnabled(true);
+  setOperationStatus({});
+  errorLabel_->setText(message);
+  errorLabel_->setVisible(true);
 }
 
 void CinematographyWidget::updatePreview(const QImage& image, const QString& placeholder) {

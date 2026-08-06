@@ -54,6 +54,9 @@ class CinematographyWidget : public QWidget {
   void restoreSelectedTestShotSettings();
   [[nodiscard]] ShotCameraSettings currentCameraSettings() const;
   [[nodiscard]] std::map<QString, QString> currentDisplaySettings() const;
+  void setConnectionStatus(const QString& text, bool connected);
+  void setOperationStatus(const QString& text);
+  void clearError();
   void showError(const QString& message);
   void updatePreview(const QImage& image, const QString& placeholder = {});
 
@@ -71,7 +74,10 @@ class CinematographyWidget : public QWidget {
 
   QLabel* shotLabel_ = nullptr;
   QLabel* previewLabel_ = nullptr;
-  QLabel* statusLabel_ = nullptr;
+  QLabel* connectionStatusLabel_ = nullptr;
+  QLabel* operationStatusLabel_ = nullptr;
+  QLabel* errorLabel_ = nullptr;
+  QLabel* galleryStatusLabel_ = nullptr;
   QComboBox* cameraCombo_ = nullptr;
   QPushButton* captureButton_ = nullptr;
   QPushButton* liveButton_ = nullptr;
