@@ -1,8 +1,10 @@
 #include "animation_widget.h"
 
 #include "cinematography_widget.h"
+#include "playback_timing.h"
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDateTime>
 #include <QFile>
 #include <QFrame>
@@ -11,6 +13,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QImageReader>
 #include <QPainter>
 #include <QPushButton>
 #include <QShortcut>
@@ -197,6 +200,14 @@ AnimationWidget::AnimationWidget(CinematographyWidget* cinematography,
   playbackOptions->addStretch();
   playbackOptions->addWidget(loopCheck_);
   side->addLayout(playbackOptions);
+  playbackQuality_ = new QComboBox(sidebar);
+  playbackQuality_->addItem("Live-view preview");
+  playbackQuality_->addItem("High-resolution preview");
+  playbackQuality_->setToolTip(
+      "Live-view preview uses the low-resolution frame directory for reliable "
+      "playback. High-resolution preview uses captured preview images, never "
+      "RAW files.");
+  side->addWidget(playbackQuality_);
   deleteButton_ = new QPushButton("Delete selected frame", sidebar);
   side->addWidget(deleteButton_);
   side->addStretch();
@@ -205,6 +216,7 @@ AnimationWidget::AnimationWidget(CinematographyWidget* cinematography,
 
   playbackTimer_ = new QTimer(this);
   playbackTimer_->setTimerType(Qt::PreciseTimer);
+  playbackTimer_->setSingleShot(true);
   connect(playbackTimer_, &QTimer::timeout, this,
           [this] { advancePlayback(); });
   connect(cinematography_, &CinematographyWidget::cameraChanged, this,
@@ -246,7 +258,10 @@ AnimationWidget::AnimationWidget(CinematographyWidget* cinematography,
       }
     }
     if (playbackTimer_->isActive()) {
-      playbackTimer_->setInterval(1000 / value);
+      playbackClock_.restart();
+      playbackTransition_ = 0;
+      playbackStartRow_ = playbackRow_;
+      schedulePlaybackFrame();
     }
   });
 
@@ -508,14 +523,34 @@ void AnimationWidget::togglePlayback() {
   if (frames_.empty()) {
     return;
   }
+  playbackImages_.clear();
+  playbackImages_.reserve(frames_.size() + 1);
+  const bool highResolution = playbackQuality_->currentIndex() == 1;
+  for (const AnimationFrame& frame : frames_) {
+    QImageReader reader(highResolution ? frame.highResPath : frame.lowResPath);
+    if (highResolution) {
+      const QSize sourceSize = reader.size();
+      if (sourceSize.isValid()) {
+        reader.setScaledSize(sourceSize.scaled(canvas_->size(),
+                                               Qt::KeepAspectRatio));
+      }
+    }
+    playbackImages_.push_back(reader.read());
+  }
+  if (!liveImage_.isNull()) {
+    playbackImages_.push_back(liveImage_);
+  }
   showingLive_ = false;
   static_cast<AnimationCanvas*>(canvas_)->setOnionImage({}, 0.0);
   playbackRow_ = frameStrip_->currentRow();
   if (playbackRow_ < 0 || playbackRow_ >= static_cast<int>(frames_.size())) {
     playbackRow_ = 0;
   }
-  showFrame(playbackRow_);
-  playbackTimer_->start(1000 / fpsSpin_->value());
+  playbackStartRow_ = playbackRow_;
+  playbackTransition_ = 0;
+  showPlaybackFrame(playbackRow_);
+  playbackClock_.start();
+  schedulePlaybackFrame();
   playButton_->setText("Pause");
   updateControls();
 }
@@ -523,6 +558,7 @@ void AnimationWidget::togglePlayback() {
 
 void AnimationWidget::stopPlayback(bool returnToLive) {
   playbackTimer_->stop();
+  playbackImages_.clear();
   playButton_->setText("Play");
   playbackRow_ = -1;
   if (returnToLive && !showingLive_) {
@@ -532,15 +568,34 @@ void AnimationWidget::stopPlayback(bool returnToLive) {
 
 
 void AnimationWidget::advancePlayback() {
-  ++playbackRow_;
-  if (playbackRow_ >= static_cast<int>(frames_.size())) {
-    if (!loopCheck_->isChecked()) {
-      stopPlayback();
-      return;
-    }
-    playbackRow_ = 0;
+  if (playbackImages_.empty()) {
+    stopPlayback();
+    return;
   }
-  showFrame(playbackRow_);
+
+  const qint64 elapsedNs = playbackClock_.nsecsElapsed();
+  const qint64 expectedTransition =
+      PlaybackTiming::transitionAt(elapsedNs, fpsSpin_->value(),
+                                   playbackTransition_);
+  if (!loopCheck_->isChecked() &&
+      expectedTransition >=
+          static_cast<qint64>(playbackImages_.size()) - playbackStartRow_) {
+    stopPlayback();
+    return;
+  }
+
+  playbackTransition_ = expectedTransition;
+  playbackRow_ = static_cast<int>(
+      (playbackStartRow_ + playbackTransition_) %
+      static_cast<qint64>(playbackImages_.size()));
+  showPlaybackFrame(playbackRow_);
+  schedulePlaybackFrame();
+}
+
+
+void AnimationWidget::schedulePlaybackFrame() {
+  playbackTimer_->start(PlaybackTiming::delayMilliseconds(
+      playbackClock_.nsecsElapsed(), fpsSpin_->value(), playbackTransition_));
 }
 
 
@@ -580,6 +635,27 @@ void AnimationWidget::showFrame(int row) {
 }
 
 
+void AnimationWidget::showPlaybackFrame(int row) {
+  if (row < 0 || row >= static_cast<int>(playbackImages_.size())) {
+    return;
+  }
+  if (row < static_cast<int>(frames_.size())) {
+    const QSignalBlocker blocker(frameStrip_);
+    frameStrip_->setCurrentRow(row);
+    frameCountLabel_->setText(
+        QString("Frame %1 of %2").arg(row + 1).arg(frames_.size()));
+  } else {
+    const QSignalBlocker blocker(frameStrip_);
+    frameStrip_->setCurrentRow(-1);
+    frameCountLabel_->setText("Live view");
+  }
+  static_cast<AnimationCanvas*>(canvas_)->setBaseImage(
+      playbackImages_[row], playbackImages_[row].isNull()
+                                ? "Could not load frame"
+                                : QString{});
+}
+
+
 void AnimationWidget::updateControls() {
   const bool hasTake = project_ != nullptr && activeTake_.has_value();
   const bool capturing = pendingCapture_.has_value();
@@ -588,6 +664,7 @@ void AnimationWidget::updateControls() {
                              !playbackTimer_->isActive());
   liveButton_->setEnabled(camera_ != nullptr && !showingLive_);
   playButton_->setEnabled(!frames_.empty() && !capturing);
+  playbackQuality_->setEnabled(!playbackTimer_->isActive());
   deleteButton_->setEnabled(frameStrip_->currentRow() >= 0 && !capturing &&
                             !playbackTimer_->isActive());
   onionCheck_->setEnabled(hasTake && !frames_.empty());

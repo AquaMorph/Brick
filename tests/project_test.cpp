@@ -1,4 +1,5 @@
 #include "project.h"
+#include "playback_timing.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -40,6 +41,15 @@ int main(int argc, char* argv[]) {
   const QString projectPath =
       QDir(temporaryDirectory.path()).filePath("Example_Film");
   bool passed = true;
+  passed &= expect(
+      PlaybackTiming::delayMilliseconds(0, 24, 0) == 42,
+      "A 24 FPS playback deadline was rounded incorrectly.");
+  passed &= expect(
+      PlaybackTiming::transitionAt(130'000'000, 24, 0) == 3,
+      "Playback did not skip delayed frames to preserve its configured FPS.");
+  passed &= expect(
+      PlaybackTiming::transitionAt(42'000'000, 24, 1) == 2,
+      "Playback did not advance after an on-time timer callback.");
   passed &= expect(created->name() == "Example Film",
                    "The created project has the wrong name.");
   passed &= expect(QFile::exists(QDir(projectPath).filePath("project.conf")),

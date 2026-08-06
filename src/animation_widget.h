@@ -3,6 +3,7 @@
 #include "camera.h"
 #include "project.h"
 
+#include <QElapsedTimer>
 #include <QImage>
 #include <QTemporaryDir>
 #include <QWidget>
@@ -12,6 +13,7 @@
 
 class CinematographyWidget;
 class QCheckBox;
+class QComboBox;
 class QLabel;
 class QListWidget;
 class QPushButton;
@@ -46,8 +48,10 @@ class AnimationWidget : public QWidget {
   void togglePlayback();
   void stopPlayback(bool returnToLive = true);
   void advancePlayback();
+  void schedulePlaybackFrame();
   void navigate(int offset);
   void showFrame(int row);
+  void showPlaybackFrame(int row);
   void updateControls();
   void showError(const QString& message);
 
@@ -59,7 +63,11 @@ class AnimationWidget : public QWidget {
   std::optional<PendingCapture> pendingCapture_;
   QTemporaryDir captureDirectory_;
   QImage liveImage_;
+  std::vector<QImage> playbackImages_;
+  QElapsedTimer playbackClock_;
   int playbackRow_ = -1;
+  qint64 playbackTransition_ = 0;
+  int playbackStartRow_ = 0;
   bool showingLive_ = true;
   bool cinematographyCaptureActive_ = false;
 
@@ -76,6 +84,7 @@ class AnimationWidget : public QWidget {
   QPushButton* deleteButton_ = nullptr;
   QCheckBox* onionCheck_ = nullptr;
   QCheckBox* loopCheck_ = nullptr;
+  QComboBox* playbackQuality_ = nullptr;
   QSlider* onionOpacity_ = nullptr;
   QSpinBox* fpsSpin_ = nullptr;
   QTimer* playbackTimer_ = nullptr;
