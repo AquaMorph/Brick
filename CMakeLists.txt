@@ -11,7 +11,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Multimedia Widgets)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Concurrent Multimedia Widgets)
 
 option(BRICK_ENABLE_CANON_EDSDK
        "Build Canon DSLR support using a locally supplied Canon EDSDK" OFF)
@@ -34,7 +34,7 @@ qt_add_executable(brick
   src/project.h
 )
 
-target_link_libraries(brick PRIVATE Qt6::Multimedia Qt6::Widgets)
+target_link_libraries(brick PRIVATE Qt6::Concurrent Qt6::Multimedia Qt6::Widgets)
 
 if(BRICK_ENABLE_CANON_EDSDK)
   if(WIN32)

@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QFrame>
+#include <QFutureWatcher>
 #include <QHBoxLayout>
 #include <QImageReader>
 #include <QLabel>
@@ -23,6 +24,7 @@
 #include <QStyle>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QtConcurrentRun>
 #include <algorithm>
 #include <cmath>
 
@@ -640,6 +642,7 @@ void CinematographyWidget::refreshGallery(const QString& selectedFileName) {
 }
 
 void CinematographyWidget::showTestShot(int row) {
+  ++previewLoadId_;
   if (row < 0 || row >= static_cast<int>(testShots_.size())) {
     restoreButton_->setEnabled(false);
     deleteButton_->setEnabled(false);
@@ -647,8 +650,20 @@ void CinematographyWidget::showTestShot(int row) {
   }
   setLivePreview(false);
   const TestShot& shot = testShots_[row];
-  const QImage image = loadScaledImage(shot.filePath, previewLabel_->size());
-  updatePreview(image, image.isNull() ? "Could not load image" : QString{});
+  updatePreview({}, "Loading image...");
+  const quint64 loadId = previewLoadId_;
+  auto* watcher = new QFutureWatcher<QImage>(this);
+  connect(watcher, &QFutureWatcher<QImage>::finished, this, [this, watcher, loadId] {
+    const QImage image = watcher->result();
+    watcher->deleteLater();
+    if (loadId == previewLoadId_) {
+      updatePreview(image, image.isNull() ? "Could not load image" : QString{});
+    }
+  });
+  const QString filePath = shot.filePath;
+  const QSize previewSize = previewLabel_->size();
+  watcher->setFuture(QtConcurrent::run(
+      [filePath, previewSize] { return loadScaledImage(filePath, previewSize); }));
 
   QStringList metadata = {"<b>" + shot.fileName.toHtmlEscaped() + "</b>",
                           shot.capturedUtc.toLocalTime().toString("yyyy-MM-dd  hh:mm:ss"),
@@ -662,6 +677,7 @@ void CinematographyWidget::showTestShot(int row) {
 }
 
 void CinematographyWidget::showLiveView() {
+  ++previewLoadId_;
   setLivePreview(true);
   gallery_->clearSelection();
   gallery_->setCurrentRow(-1);

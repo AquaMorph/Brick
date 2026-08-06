@@ -65,6 +65,7 @@ class CinematographyWidget : public QWidget {
   std::vector<CameraSetting> settings_;
   std::vector<TestShot> testShots_;
   std::optional<PendingCapture> pendingCapture_;
+  quint64 previewLoadId_ = 0;
   QImage previewImage_;
   QTemporaryDir captureDirectory_;
 
