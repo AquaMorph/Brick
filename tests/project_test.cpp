@@ -1,4 +1,5 @@
 #include "project.h"
+#include "frame_rate.h"
 #include "playback_timing.h"
 
 #include <QCoreApplication>
@@ -24,9 +25,19 @@ bool expect(bool condition, const char* message) {
 
 int main(int argc, char* argv[]) {
   QCoreApplication application(argc, argv);
+  QCoreApplication::setOrganizationName("Brick");
+  QCoreApplication::setApplicationName("BrickTests");
   QTemporaryDir temporaryDirectory;
   if (!expect(temporaryDirectory.isValid(),
-              "Could not create the temporary test directory.")) {
+               "Could not create the temporary test directory.")) {
+    return 1;
+  }
+  QSettings::setDefaultFormat(QSettings::IniFormat);
+  QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                     temporaryDirectory.path());
+  QSettings().clear();
+  if (!expect(FrameRate::saveApplicationDefault(15),
+              "Could not save the application frame rate default.")) {
     return 1;
   }
 
@@ -133,7 +144,9 @@ int main(int argc, char* argv[]) {
           .exists("tests"),
       "Shot creation did not create the test shots folder.");
   passed &= expect(created->takeCount(0, 0) == 1,
-                   "Shot creation did not add its first take.");
+                    "Shot creation did not add its first take.");
+  passed &= expect(created->takeFrameRate(0, 0, 0, &error) == 15,
+                    "The first take did not use the application FPS default.");
   passed &= expect(
       QFile::exists(QDir(projectPath).filePath(
           "0001_FIRST_SCENE/0001_WIDE_SHOT/0001_TAKE/take.conf")),
@@ -313,7 +326,9 @@ int main(int argc, char* argv[]) {
                        created->takeFrameRate(0, 0, 0, &error) == 24,
                    "The take frame rate was not saved.");
   passed &= expect(!created->saveTakeFrameRate(0, 0, 0, 0, &error),
-                   "An invalid take frame rate was accepted.");
+                    "An invalid take frame rate was accepted.");
+  passed &= expect(!created->saveTakeFrameRate(0, 0, 0, 25, &error),
+                    "An unsupported take frame rate was accepted.");
   passed &= expect(created->deleteFrame(0, 0, 0, 1, &error),
                    "An animation frame could not be deleted.");
   passed &= expect(!created->deleteFrame(0, 0, 0, 1, &error),
@@ -340,10 +355,14 @@ int main(int argc, char* argv[]) {
                        opened->takeFrameRate(0, 0, 0, &error) == 24,
                    "Animation take settings did not survive reopening.");
 
+  passed &= expect(FrameRate::saveApplicationDefault(30),
+                    "The application FPS default could not be changed.");
   passed &= expect(created->createTake(0, 0, &error),
-                   "A second take was not created.");
+                    "A second take was not created.");
   passed &= expect(created->takeCount(0, 0) == 2,
-                   "Take creation did not update the shot.");
+                    "Take creation did not update the shot.");
+  passed &= expect(created->takeFrameRate(0, 0, 1, &error) == 30,
+                    "A new take did not use the updated application FPS default.");
   passed &= expect(
       QFile::exists(QDir(projectPath).filePath(
           "0001_FIRST_SCENE/0001_WIDE_SHOT/0002_TAKE/take.conf")),

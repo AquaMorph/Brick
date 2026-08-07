@@ -18,7 +18,6 @@ class QLabel;
 class QListWidget;
 class QPushButton;
 class QSlider;
-class QSpinBox;
 class QTimer;
 
 class AnimationWidget : public QWidget {
@@ -86,6 +85,6 @@ class AnimationWidget : public QWidget {
   QCheckBox* loopCheck_ = nullptr;
   QComboBox* playbackQuality_ = nullptr;
   QSlider* onionOpacity_ = nullptr;
-  QSpinBox* fpsSpin_ = nullptr;
+  QComboBox* fpsCombo_ = nullptr;
   QTimer* playbackTimer_ = nullptr;
 };

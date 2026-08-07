@@ -1,6 +1,7 @@
 #include "animation_widget.h"
 
 #include "cinematography_widget.h"
+#include "frame_rate.h"
 #include "playback_timing.h"
 
 #include <QCheckBox>
@@ -21,7 +22,6 @@
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSlider>
-#include <QSpinBox>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -194,11 +194,15 @@ AnimationWidget::AnimationWidget(CinematographyWidget* cinematography,
   transport->addWidget(lastButton);
   side->addLayout(transport);
   auto* playbackOptions = new QHBoxLayout;
-  fpsSpin_ = new QSpinBox(sidebar);
-  fpsSpin_->setRange(1, 60);
-  fpsSpin_->setSuffix(" FPS");
+  fpsCombo_ = new QComboBox(sidebar);
+  for (const int framesPerSecond : FrameRate::kSupported) {
+    fpsCombo_->addItem(QString("%1 FPS").arg(framesPerSecond),
+                       framesPerSecond);
+  }
+  fpsCombo_->setCurrentIndex(
+      fpsCombo_->findData(FrameRate::applicationDefault()));
   loopCheck_ = new QCheckBox("Loop", sidebar);
-  playbackOptions->addWidget(fpsSpin_);
+  playbackOptions->addWidget(fpsCombo_);
   playbackOptions->addStretch();
   playbackOptions->addWidget(loopCheck_);
   side->addLayout(playbackOptions);
@@ -265,7 +269,8 @@ AnimationWidget::AnimationWidget(CinematographyWidget* cinematography,
           [this] { navigate(1); });
   connect(lastButton, &QPushButton::clicked, this,
           [this] { navigate(1000000); });
-  connect(fpsSpin_, &QSpinBox::valueChanged, this, [this](int value) {
+  connect(fpsCombo_, &QComboBox::currentIndexChanged, this, [this](int index) {
+    const int value = fpsCombo_->itemData(index).toInt();
     if (activeTake_.has_value()) {
       QString error;
       if (!project_->saveTakeFrameRate(activeTake_->sceneIndex,
@@ -273,6 +278,9 @@ AnimationWidget::AnimationWidget(CinematographyWidget* cinematography,
                                        activeTake_->takeIndex, value, &error)) {
         showError(error);
       }
+    }
+    if (!FrameRate::saveApplicationDefault(value)) {
+      showError("Brick could not save the default frame rate.");
     }
     if (playbackTimer_->isActive()) {
       playbackClock_.restart();
@@ -327,8 +335,12 @@ void AnimationWidget::setActiveTake(
           .arg(project_->shots(take.sceneIndex)[take.shotIndex])
           .arg(take.takeIndex + 1, 4, 10, QLatin1Char('0')));
   QString error;
-  fpsSpin_->setValue(project_->takeFrameRate(
-      take.sceneIndex, take.shotIndex, take.takeIndex, &error));
+  const int framesPerSecond = project_->takeFrameRate(
+      take.sceneIndex, take.shotIndex, take.takeIndex, &error);
+  {
+    const QSignalBlocker blocker(fpsCombo_);
+    fpsCombo_->setCurrentIndex(fpsCombo_->findData(framesPerSecond));
+  }
   if (!error.isEmpty()) {
     showError(error);
   }
@@ -592,7 +604,7 @@ void AnimationWidget::advancePlayback() {
 
   const qint64 elapsedNs = playbackClock_.nsecsElapsed();
   const qint64 expectedTransition =
-      PlaybackTiming::transitionAt(elapsedNs, fpsSpin_->value(),
+      PlaybackTiming::transitionAt(elapsedNs, fpsCombo_->currentData().toInt(),
                                    playbackTransition_);
   if (!loopCheck_->isChecked() &&
       expectedTransition >=
@@ -612,7 +624,8 @@ void AnimationWidget::advancePlayback() {
 
 void AnimationWidget::schedulePlaybackFrame() {
   playbackTimer_->start(PlaybackTiming::delayMilliseconds(
-      playbackClock_.nsecsElapsed(), fpsSpin_->value(), playbackTransition_));
+      playbackClock_.nsecsElapsed(), fpsCombo_->currentData().toInt(),
+      playbackTransition_));
 }
 
 

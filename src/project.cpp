@@ -1,5 +1,7 @@
 #include "project.h"
 
+#include "frame_rate.h"
+
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -152,7 +154,8 @@ bool createTakeDirectory(QDir shot, int index, QString* error) {
   config.beginGroup("Take");
   config.setValue("formatVersion", kTakeFormatVersion);
   config.setValue("createdUtc",
-                  QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+                   QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+  config.setValue("framesPerSecond", FrameRate::applicationDefault());
   config.endGroup();
   config.sync();
   if (config.status() != QSettings::NoError) {
@@ -618,16 +621,17 @@ int Project::takeFrameRate(int sceneIndex, int shotIndex, int takeIndex,
                            QString* error) const {
   const QString path = takeDirectory(sceneIndex, shotIndex, takeIndex, error);
   if (path.isEmpty()) {
-    return 12;
+    return FrameRate::kDefault;
   }
   QSettings config(QDir(path).filePath(kTakeConfigFileName),
                    QSettings::IniFormat);
-  const int frameRate = config.value("Take/framesPerSecond", 12).toInt();
+  const int frameRate =
+      config.value("Take/framesPerSecond", FrameRate::kDefault).toInt();
   if (config.status() != QSettings::NoError) {
     setError(error, "Brick could not read the take frame rate.");
-    return 12;
+    return FrameRate::kDefault;
   }
-  return std::clamp(frameRate, 1, 60);
+  return FrameRate::isSupported(frameRate) ? frameRate : FrameRate::kDefault;
 }
 
 
@@ -936,8 +940,8 @@ bool Project::deleteFrame(int sceneIndex, int shotIndex, int takeIndex,
 
 bool Project::saveTakeFrameRate(int sceneIndex, int shotIndex, int takeIndex,
                                 int framesPerSecond, QString* error) {
-  if (framesPerSecond < 1 || framesPerSecond > 60) {
-    setError(error, "The take frame rate must be between 1 and 60 FPS.");
+  if (!FrameRate::isSupported(framesPerSecond)) {
+    setError(error, "The take frame rate must be 8, 12, 15, 24, or 30 FPS.");
     return false;
   }
   const QString path = takeDirectory(sceneIndex, shotIndex, takeIndex, error);

@@ -28,6 +28,7 @@ qt_add_executable(brick
   src/main_window.h
   src/animation_widget.cpp
   src/animation_widget.h
+  src/frame_rate.h
   src/playback_timing.h
   src/camera.cpp
   src/camera.h
@@ -110,6 +111,7 @@ if(BUILD_TESTING)
     tests/project_test.cpp
     src/project.cpp
     src/project.h
+    src/frame_rate.h
     src/playback_timing.h
   )
   target_include_directories(project_tests PRIVATE src)
