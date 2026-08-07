@@ -110,15 +110,8 @@ AnimationWidget::AnimationWidget(CinematographyWidget* cinematography,
   root->setSpacing(14);
 
   auto* header = new QHBoxLayout;
-  auto* title = new QLabel("Animation", this);
-  QFont titleFont = title->font();
-  titleFont.setPointSize(18);
-  titleFont.setBold(true);
-  title->setFont(titleFont);
   takeLabel_ = new QLabel("No active take selected", this);
   cameraLabel_ = new QLabel("No camera connected", this);
-  header->addWidget(title);
-  header->addSpacing(14);
   header->addWidget(takeLabel_);
   header->addStretch();
   header->addWidget(cameraLabel_);

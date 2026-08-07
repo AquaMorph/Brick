@@ -114,15 +114,8 @@ CinematographyWidget::CinematographyWidget(QWidget* parent) : QWidget(parent) {
   root->setSpacing(14);
 
   auto* header = new QHBoxLayout;
-  auto* title = new QLabel("Cinematography", this);
-  QFont titleFont = title->font();
-  titleFont.setPointSize(18);
-  titleFont.setBold(true);
-  title->setFont(titleFont);
   shotLabel_ = new QLabel("Select a shot in Direct", this);
   shotLabel_->setObjectName("cinematographyShotLabel");
-  header->addWidget(title);
-  header->addSpacing(14);
   header->addWidget(shotLabel_);
   header->addStretch();
   connectionStatusLabel_ = new QLabel("Disconnected  ·  No camera selected", this);
