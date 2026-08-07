@@ -81,6 +81,24 @@ QString frameLabel(int number) {
   return QString("%1").arg(number, 6, 10, QLatin1Char('0'));
 }
 
+QIcon liveViewIcon() {
+  QPixmap thumbnail(112, 63);
+  thumbnail.fill(QColor("#171717"));
+
+  QPainter painter(&thumbnail);
+  painter.setRenderHint(QPainter::Antialiasing);
+  painter.setPen(QPen(QColor("#8f2d24"), 2));
+  painter.setBrush(QColor("#d6d6d6"));
+  painter.drawRoundedRect(QRectF(36, 21, 40, 25), 3, 3);
+  painter.drawRoundedRect(QRectF(43, 17, 13, 7), 2, 2);
+  painter.setBrush(QColor("#171717"));
+  painter.drawEllipse(QPointF(56, 33.5), 8, 8);
+  painter.setPen(Qt::NoPen);
+  painter.setBrush(QColor("#8f2d24"));
+  painter.drawEllipse(QPointF(56, 33.5), 4, 4);
+  return QIcon(thumbnail);
+}
+
 }  // namespace
 
 
@@ -104,8 +122,6 @@ AnimationWidget::AnimationWidget(CinematographyWidget* cinematography,
   header->addWidget(takeLabel_);
   header->addStretch();
   header->addWidget(cameraLabel_);
-  liveButton_ = new QPushButton("Live view", this);
-  header->addWidget(liveButton_);
   root->addLayout(header);
 
   auto* workspace = new QHBoxLayout;
@@ -234,14 +250,14 @@ AnimationWidget::AnimationWidget(CinematographyWidget* cinematography,
           });
   connect(captureButton_, &QPushButton::clicked, this,
           [this] { capture(); });
-  connect(liveButton_, &QPushButton::clicked, this,
-          [this] { showLiveView(); });
   connect(frameStrip_, &QListWidget::currentRowChanged, this,
           [this](int row) { selectFrame(row); });
   connect(frameStrip_, &QListWidget::customContextMenuRequested, this,
           [this](const QPoint& position) {
             QListWidgetItem* item = frameStrip_->itemAt(position);
-            if (item == nullptr || pendingCapture_.has_value() ||
+            if (item == nullptr || frameStrip_->row(item) >=
+                                       static_cast<int>(frames_.size()) ||
+                pendingCapture_.has_value() ||
                 playbackTimer_->isActive()) {
               return;
             }
@@ -452,9 +468,12 @@ void AnimationWidget::importCapture(const QString& filePath) {
 
 
 void AnimationWidget::refreshFrames(int selectedNumber) {
+  const QSignalBlocker blocker(frameStrip_);
   frameStrip_->clear();
   frames_.clear();
   if (project_ == nullptr || !activeTake_.has_value()) {
+    new QListWidgetItem(liveViewIcon(), "Live view", frameStrip_);
+    frameStrip_->setCurrentRow(0);
     frameCountLabel_->setText("No active take");
     updateControls();
     return;
@@ -472,6 +491,11 @@ void AnimationWidget::refreshFrames(int selectedNumber) {
       frameStrip_->setCurrentItem(item);
     }
   }
+  auto* liveItem =
+      new QListWidgetItem(liveViewIcon(), "Live view", frameStrip_);
+  if (showingLive_) {
+    frameStrip_->setCurrentItem(liveItem);
+  }
   frameCountLabel_->setText(
       QString("%1 frame%2").arg(frames_.size()).arg(frames_.size() == 1 ? "" : "s"));
   if (!error.isEmpty()) {
@@ -483,6 +507,10 @@ void AnimationWidget::refreshFrames(int selectedNumber) {
 
 
 void AnimationWidget::selectFrame(int row) {
+  if (row == static_cast<int>(frames_.size())) {
+    showLiveView();
+    return;
+  }
   if (row < 0 || row >= static_cast<int>(frames_.size())) {
     updateControls();
     return;
@@ -496,8 +524,8 @@ void AnimationWidget::selectFrame(int row) {
 void AnimationWidget::showLiveView() {
   stopPlayback(false);
   showingLive_ = true;
-  frameStrip_->clearSelection();
-  frameStrip_->setCurrentRow(-1);
+  const QSignalBlocker blocker(frameStrip_);
+  frameStrip_->setCurrentRow(static_cast<int>(frames_.size()));
   static_cast<AnimationCanvas*>(canvas_)->setBaseImage(
       liveImage_, camera_ == nullptr ? "Connect a camera in Cinematography"
                                     : "Waiting for live view...");
@@ -676,7 +704,7 @@ void AnimationWidget::showPlaybackFrame(int row) {
         QString("Frame %1 of %2").arg(row + 1).arg(frames_.size()));
   } else {
     const QSignalBlocker blocker(frameStrip_);
-    frameStrip_->setCurrentRow(-1);
+    frameStrip_->setCurrentRow(static_cast<int>(frames_.size()));
     frameCountLabel_->setText("Live view");
   }
   static_cast<AnimationCanvas*>(canvas_)->setBaseImage(
@@ -692,11 +720,12 @@ void AnimationWidget::updateControls() {
   captureButton_->setEnabled(hasTake && camera_ != nullptr && !capturing &&
                              !cinematographyCaptureActive_ &&
                              !playbackTimer_->isActive());
-  liveButton_->setEnabled(camera_ != nullptr && !showingLive_);
   playButton_->setEnabled(!frames_.empty() && !capturing);
   playbackQuality_->setEnabled(!playbackTimer_->isActive());
-  deleteButton_->setEnabled(frameStrip_->currentRow() >= 0 && !capturing &&
-                            !playbackTimer_->isActive());
+  deleteButton_->setEnabled(
+      frameStrip_->currentRow() >= 0 &&
+      frameStrip_->currentRow() < static_cast<int>(frames_.size()) &&
+      !capturing && !playbackTimer_->isActive());
   onionCheck_->setEnabled(hasTake && !frames_.empty());
   onionOpacity_->setEnabled(onionCheck_->isEnabled() && onionCheck_->isChecked());
 }

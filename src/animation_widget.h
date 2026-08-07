@@ -78,7 +78,6 @@ class AnimationWidget : public QWidget {
   QLabel* frameCountLabel_ = nullptr;
   QListWidget* frameStrip_ = nullptr;
   QPushButton* captureButton_ = nullptr;
-  QPushButton* liveButton_ = nullptr;
   QPushButton* playButton_ = nullptr;
   QPushButton* deleteButton_ = nullptr;
   QCheckBox* onionCheck_ = nullptr;
