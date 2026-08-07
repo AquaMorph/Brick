@@ -12,6 +12,7 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QListWidget>
+#include <QMenu>
 #include <QMessageBox>
 #include <QImageReader>
 #include <QPainter>
@@ -140,6 +141,7 @@ AnimationWidget::AnimationWidget(CinematographyWidget* cinematography,
   frameStrip_->setIconSize(QSize(112, 63));
   frameStrip_->setSpacing(8);
   frameStrip_->setMaximumHeight(118);
+  frameStrip_->setContextMenuPolicy(Qt::CustomContextMenu);
   imageColumn->addWidget(frameStrip_);
   workspace->addLayout(imageColumn, 1);
 
@@ -232,6 +234,21 @@ AnimationWidget::AnimationWidget(CinematographyWidget* cinematography,
           [this] { showLiveView(); });
   connect(frameStrip_, &QListWidget::currentRowChanged, this,
           [this](int row) { selectFrame(row); });
+  connect(frameStrip_, &QListWidget::customContextMenuRequested, this,
+          [this](const QPoint& position) {
+            QListWidgetItem* item = frameStrip_->itemAt(position);
+            if (item == nullptr || pendingCapture_.has_value() ||
+                playbackTimer_->isActive()) {
+              return;
+            }
+            frameStrip_->setCurrentItem(item);
+            QMenu menu(frameStrip_);
+            QAction* deleteAction = menu.addAction("Delete");
+            if (menu.exec(frameStrip_->viewport()->mapToGlobal(position)) ==
+                deleteAction) {
+              deleteSelectedFrame();
+            }
+          });
   connect(deleteButton_, &QPushButton::clicked, this,
           [this] { deleteSelectedFrame(); });
   connect(onionCheck_, &QCheckBox::toggled, this,
