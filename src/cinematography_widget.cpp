@@ -1,5 +1,7 @@
 #include "cinematography_widget.h"
 
+#include "layout_constants.h"
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTime>
@@ -181,8 +183,7 @@ CinematographyWidget::CinematographyWidget(QWidget* parent) : QWidget(parent) {
 
   auto* sidebar = new QFrame(this);
   sidebar->setObjectName("cameraSidebar");
-  sidebar->setMinimumWidth(320);
-  sidebar->setMaximumWidth(420);
+  sidebar->setFixedWidth(UiConstants::kSidebarWidth);
   auto* sidebarLayout = new QVBoxLayout(sidebar);
   sidebarLayout->setContentsMargins(16, 16, 16, 16);
   sidebarLayout->setSpacing(12);

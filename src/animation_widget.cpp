@@ -3,6 +3,7 @@
 #include "cinematography_widget.h"
 #include "frame_rate.h"
 #include "playback_timing.h"
+#include "layout_constants.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -147,8 +148,7 @@ AnimationWidget::AnimationWidget(CinematographyWidget* cinematography,
 
   auto* sidebar = new QFrame(this);
   sidebar->setObjectName("cameraSidebar");
-  sidebar->setMinimumWidth(260);
-  sidebar->setMaximumWidth(330);
+  sidebar->setFixedWidth(UiConstants::kSidebarWidth);
   auto* side = new QVBoxLayout(sidebar);
   side->setContentsMargins(16, 16, 16, 16);
   side->setSpacing(12);

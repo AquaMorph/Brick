@@ -30,6 +30,7 @@ qt_add_executable(brick
   src/animation_widget.h
   src/frame_rate.h
   src/playback_timing.h
+  src/layout_constants.h
   src/camera.cpp
   src/camera.h
   src/cinematography_widget.cpp
