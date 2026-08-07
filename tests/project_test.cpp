@@ -36,6 +36,10 @@ int main(int argc, char* argv[]) {
   QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                      temporaryDirectory.path());
   QSettings().clear();
+  if (!expect(FrameRate::applicationDefault() == 24,
+              "The initial application frame rate is not 24 FPS.")) {
+    return 1;
+  }
   if (!expect(FrameRate::saveApplicationDefault(15),
               "Could not save the application frame rate default.")) {
     return 1;

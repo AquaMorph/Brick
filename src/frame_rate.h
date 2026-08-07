@@ -8,7 +8,7 @@
 namespace FrameRate {
 
 inline constexpr std::array kSupported = {8, 12, 15, 24, 30};
-inline constexpr int kDefault = 12;
+inline constexpr int kDefault = 24;
 inline constexpr auto kDefaultSettingKey = "Animation/defaultFramesPerSecond";
 
 inline bool isSupported(int framesPerSecond) {
