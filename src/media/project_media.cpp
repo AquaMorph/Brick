@@ -1,7 +1,7 @@
-#include "project.h"
+#include "core/project.h"
 
-#include "frame_rate.h"
-#include "project_storage_internal.h"
+#include "settings/frame_rate.h"
+#include "storage/project_storage_internal.h"
 
 #include <QDir>
 #include <QFile>

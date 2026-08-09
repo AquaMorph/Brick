@@ -1,6 +1,6 @@
-#include "cinematography_widget.h"
+#include "ui/cinematography/cinematography_widget.h"
 
-#include "layout_constants.h"
+#include "ui/shared/layout_constants.h"
 
 #include <QCheckBox>
 #include <QComboBox>

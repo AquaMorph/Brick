@@ -1,7 +1,7 @@
 #pragma once
 
 #include "camera/capture_coordinator.h"
-#include "project.h"
+#include "core/project.h"
 
 #include <QElapsedTimer>
 #include <QImage>

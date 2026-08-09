@@ -27,13 +27,13 @@ set(BRICK_EDSDK_ROOT "${CMAKE_SOURCE_DIR}/third_party/canon/EDSDK" CACHE PATH
 qt_standard_project_setup()
 
 qt_add_library(brick_core STATIC
-  src/frame_rate.h
-  src/playback_timing.h
-  src/project.cpp
-  src/project_media.cpp
-  src/project_storage.cpp
-  src/project_storage_internal.h
-  src/project.h
+  src/core/project.cpp
+  src/core/project.h
+  src/media/playback_timing.h
+  src/media/project_media.cpp
+  src/settings/frame_rate.h
+  src/storage/project_storage.cpp
+  src/storage/project_storage_internal.h
 )
 target_include_directories(brick_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(brick_core PUBLIC Qt6::Core PRIVATE Qt6::Gui)
@@ -60,13 +60,13 @@ target_link_libraries(brick_camera
 )
 
 qt_add_library(brick_ui STATIC
-  src/main_window.cpp
-  src/main_window.h
-  src/animation_widget.cpp
-  src/animation_widget.h
-  src/cinematography_widget.cpp
-  src/cinematography_widget.h
-  src/layout_constants.h
+  src/ui/animation/animation_widget.cpp
+  src/ui/animation/animation_widget.h
+  src/ui/cinematography/cinematography_widget.cpp
+  src/ui/cinematography/cinematography_widget.h
+  src/ui/shared/layout_constants.h
+  src/ui/shell/main_window.cpp
+  src/ui/shell/main_window.h
 )
 target_include_directories(brick_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(brick_ui
@@ -77,7 +77,7 @@ target_link_libraries(brick_ui
 qt_add_executable(brick
   WIN32
   MACOSX_BUNDLE
-  src/main.cpp
+  src/app/main.cpp
 )
 
 target_link_libraries(brick PRIVATE brick_ui Qt6::Widgets)

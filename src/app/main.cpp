@@ -2,7 +2,7 @@
 #include <QColor>
 #include <QPalette>
 
-#include "main_window.h"
+#include "ui/shell/main_window.h"
 
 int main(int argc, char* argv[]) {
   QApplication application(argc, argv);

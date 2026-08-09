@@ -1,8 +1,8 @@
-#include "main_window.h"
+#include "ui/shell/main_window.h"
 
-#include "animation_widget.h"
+#include "ui/animation/animation_widget.h"
 #include "camera/capture_coordinator.h"
-#include "cinematography_widget.h"
+#include "ui/cinematography/cinematography_widget.h"
 
 #include <QAction>
 #include <QApplication>

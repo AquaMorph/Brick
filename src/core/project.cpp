@@ -1,6 +1,6 @@
-#include "project.h"
+#include "core/project.h"
 
-#include "project_storage_internal.h"
+#include "storage/project_storage_internal.h"
 
 #include <utility>
 

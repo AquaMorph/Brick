@@ -1,8 +1,8 @@
-#include "animation_widget.h"
+#include "ui/animation/animation_widget.h"
 
-#include "frame_rate.h"
-#include "playback_timing.h"
-#include "layout_constants.h"
+#include "media/playback_timing.h"
+#include "settings/frame_rate.h"
+#include "ui/shared/layout_constants.h"
 
 #include <QCheckBox>
 #include <QComboBox>

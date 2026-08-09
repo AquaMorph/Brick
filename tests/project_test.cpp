@@ -1,6 +1,6 @@
-#include "project.h"
-#include "frame_rate.h"
-#include "playback_timing.h"
+#include "core/project.h"
+#include "media/playback_timing.h"
+#include "settings/frame_rate.h"
 
 #include <QCoreApplication>
 #include <QDir>
