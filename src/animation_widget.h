@@ -1,17 +1,15 @@
 #pragma once
 
-#include "camera.h"
+#include "capture_coordinator.h"
 #include "project.h"
 
 #include <QElapsedTimer>
 #include <QImage>
-#include <QTemporaryDir>
 #include <QWidget>
 
 #include <optional>
 #include <vector>
 
-class CinematographyWidget;
 class QCheckBox;
 class QComboBox;
 class QLabel;
@@ -22,21 +20,22 @@ class QTimer;
 
 class AnimationWidget : public QWidget {
  public:
-  explicit AnimationWidget(CinematographyWidget* cinematography,
-                           QWidget* parent = nullptr);
+  explicit AnimationWidget(CaptureCoordinator* captureCoordinator,
+                            QWidget* parent = nullptr);
 
   void setActiveTake(Project* project,
                      const std::optional<Project::ActiveTake>& activeTake);
 
  private:
   struct PendingCapture {
+    quint64 requestId;
+    quint64 contextRevision;
     Project* project;
     QString projectDirectory;
     QString takeDirectory;
     Project::ActiveTake take;
   };
 
-  void attachCamera(CameraSession* camera);
   void capture();
   void importCapture(const QString& filePath);
   void refreshFrames(int selectedNumber = -1);
@@ -56,11 +55,10 @@ class AnimationWidget : public QWidget {
 
   Project* project_ = nullptr;
   std::optional<Project::ActiveTake> activeTake_;
-  CinematographyWidget* cinematography_ = nullptr;
-  CameraSession* camera_ = nullptr;
+  CaptureCoordinator* captureCoordinator_ = nullptr;
   std::vector<AnimationFrame> frames_;
   std::optional<PendingCapture> pendingCapture_;
-  QTemporaryDir captureDirectory_;
+  quint64 contextRevision_ = 0;
   QImage liveImage_;
   std::vector<QImage> playbackImages_;
   QElapsedTimer playbackClock_;
@@ -68,7 +66,6 @@ class AnimationWidget : public QWidget {
   qint64 playbackTransition_ = 0;
   int playbackStartRow_ = 0;
   bool showingLive_ = true;
-  bool cinematographyCaptureActive_ = false;
 
   QWidget* canvas_ = nullptr;
   QLabel* takeLabel_ = nullptr;

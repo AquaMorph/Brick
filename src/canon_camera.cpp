@@ -558,23 +558,32 @@ class CanonSession final : public CameraSession {
     liveViewStarted_ = false;
   }
 
-  void capture(const QString& destinationBase) override {
-    if (!sessionOpen_) {
-      emit errorOccurred(initializationError_);
+  void capture(quint64 captureId, const QString& destinationBase) override {
+    if (pendingCaptureId_ != 0) {
+      emit captureFailed(captureId, "A Canon capture is already active.");
       return;
     }
+    if (!sessionOpen_) {
+      emit captureFailed(captureId, initializationError_);
+      return;
+    }
+    pendingCaptureId_ = captureId;
+    pendingCaptureBase_ = destinationBase;
+    pendingCaptureWarning_.clear();
     if (depthOfFieldPreview_) {
       const EdsError previewError = setDepthOfFieldPreview(false);
       if (previewError != EDS_ERR_OK) {
-        emit errorOccurred("Could not release Canon depth of field preview for capture: " +
-                           errorText(previewError));
+        pendingCaptureId_ = 0;
+        pendingCaptureBase_.clear();
+        emit captureFailed(
+            captureId,
+            "Could not release Canon depth of field preview for capture: " +
+                errorText(previewError));
         return;
       }
       restoreDepthOfFieldPreviewAfterCapture_ = true;
       emit settingsChanged();
     }
-    pendingCaptureBase_ = destinationBase;
-    pendingCaptureWarning_.clear();
     EdsError error = EDS_ERR_OK;
     if (restoreDepthOfFieldPreviewAfterCapture_) {
       error = EdsSendCommand(camera_, kEdsCameraCommand_PressShutterButton,
@@ -589,6 +598,7 @@ class CanonSession final : public CameraSession {
       error = EdsSendCommand(camera_, kEdsCameraCommand_TakePicture, 0);
     }
     if (error != EDS_ERR_OK) {
+      pendingCaptureId_ = 0;
       pendingCaptureBase_.clear();
       pendingCaptureWarning_.clear();
       const EdsError previewError = restoreDepthOfFieldPreview();
@@ -596,7 +606,7 @@ class CanonSession final : public CameraSession {
       if (previewError != EDS_ERR_OK) {
         message += ". Could not restore depth of field preview: " + errorText(previewError);
       }
-      emit errorOccurred(message);
+      emit captureFailed(captureId, message);
     }
   }
 
@@ -743,7 +753,17 @@ class CanonSession final : public CameraSession {
 
   static EdsError EDSCALLBACK stateEvent(EdsStateEvent event, EdsUInt32, EdsVoid* context) {
     if (event == kEdsStateEvent_Shutdown) {
-      emit static_cast<CanonSession*>(context)->errorOccurred("The Canon camera was disconnected.");
+      auto* self = static_cast<CanonSession*>(context);
+      if (self->pendingCaptureId_ != 0) {
+        const quint64 captureId = self->pendingCaptureId_;
+        self->pendingCaptureId_ = 0;
+        self->pendingCaptureBase_.clear();
+        self->pendingCaptureWarning_.clear();
+        emit self->captureFailed(
+            captureId, "The Canon camera was disconnected during capture.");
+      } else {
+        emit self->errorOccurred("The Canon camera was disconnected.");
+      }
     }
     return EDS_ERR_OK;
   }
@@ -853,7 +873,7 @@ class CanonSession final : public CameraSession {
   }
 
   void download(EdsDirectoryItemRef item) {
-    if (pendingCaptureBase_.isEmpty()) {
+    if (pendingCaptureId_ == 0 || pendingCaptureBase_.isEmpty()) {
       EdsDownloadCancel(item);
       return;
     }
@@ -877,15 +897,19 @@ class CanonSession final : public CameraSession {
     if (stream != nullptr) {
       EdsRelease(stream);
     }
+    const quint64 captureId = pendingCaptureId_;
+    pendingCaptureId_ = 0;
     pendingCaptureBase_.clear();
     const QString warning = std::move(pendingCaptureWarning_);
     pendingCaptureWarning_.clear();
     const EdsError previewError = restoreDepthOfFieldPreview();
     if (error == EDS_ERR_OK) {
-      emit captureCompleted(filePath);
+      emit captureCompleted(captureId, filePath);
     } else {
       QFile::remove(filePath);
-      emit errorOccurred("Could not download the Canon image: " + errorText(error));
+      emit captureFailed(captureId,
+                         "Could not download the Canon image: " +
+                             errorText(error));
     }
     if (previewError != EDS_ERR_OK) {
       emit errorOccurred("Could not restore Canon depth of field preview: " +
@@ -902,6 +926,7 @@ class CanonSession final : public CameraSession {
   QString initializationError_;
   QString pendingCaptureBase_;
   QString pendingCaptureWarning_;
+  quint64 pendingCaptureId_ = 0;
   bool sdkInitialized_ = false;
   bool sessionOpen_ = false;
   bool liveViewStarted_ = false;

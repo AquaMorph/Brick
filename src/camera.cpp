@@ -228,12 +228,26 @@ class WebcamSession final : public CameraSession {
               }
             });
     connect(capture_.get(), &QImageCapture::imageSaved, this,
-            [this](int, const QString& fileName) {
-              emit captureCompleted(fileName);
+            [this](int requestId, const QString& fileName) {
+              const auto request = captureIds_.find(requestId);
+              if (request == captureIds_.end()) {
+                return;
+              }
+              const quint64 captureId = request->second;
+              captureIds_.erase(request);
+              emit captureCompleted(captureId, fileName);
             });
     connect(capture_.get(), &QImageCapture::errorOccurred, this,
-            [this](int, QImageCapture::Error, const QString& message) {
-              emit errorOccurred("Webcam capture failed: " + message);
+            [this](int requestId, QImageCapture::Error,
+                   const QString& message) {
+              const auto request = captureIds_.find(requestId);
+              if (request == captureIds_.end()) {
+                emit errorOccurred("Webcam capture failed: " + message);
+                return;
+              }
+              const quint64 captureId = request->second;
+              captureIds_.erase(request);
+              emit captureFailed(captureId, "Webcam capture failed: " + message);
             });
     connect(camera_.get(), &QCamera::errorOccurred, this,
             [this](QCamera::Error, const QString& message) {
@@ -506,12 +520,18 @@ class WebcamSession final : public CameraSession {
   void start() override { camera_->start(); }
   void stop() override { camera_->stop(); }
 
-  void capture(const QString& destinationBase) override {
+  void capture(quint64 captureId, const QString& destinationBase) override {
     if (!capture_->isReadyForCapture()) {
-      emit errorOccurred("The webcam is not ready to capture an image.");
+      emit captureFailed(captureId,
+                         "The webcam is not ready to capture an image.");
       return;
     }
-    capture_->captureToFile(destinationBase + ".jpg");
+    const int requestId = capture_->captureToFile(destinationBase + ".jpg");
+    if (requestId < 0) {
+      emit captureFailed(captureId, "The webcam could not start the capture.");
+      return;
+    }
+    captureIds_.insert_or_assign(requestId, captureId);
   }
 
   void setSetting(const QString& id, const QString& value) override {
@@ -587,6 +607,7 @@ class WebcamSession final : public CameraSession {
   std::unique_ptr<QImageCapture> capture_;
   std::unique_ptr<QVideoSink> sink_;
   QMediaCaptureSession mediaSession_;
+  std::map<int, quint64> captureIds_;
 #ifdef Q_OS_LINUX
   int v4l2Descriptor_ = -1;
 #endif

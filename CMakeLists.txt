@@ -41,6 +41,8 @@ target_link_libraries(brick_core PUBLIC Qt6::Core PRIVATE Qt6::Gui)
 qt_add_library(brick_camera STATIC
   src/camera.cpp
   src/camera.h
+  src/capture_coordinator.cpp
+  src/capture_coordinator.h
 )
 target_include_directories(brick_camera PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(brick_camera

@@ -49,13 +49,14 @@ class CameraSession : public QObject {
 
   virtual void start() = 0;
   virtual void stop() = 0;
-  virtual void capture(const QString& destinationBase) = 0;
+  virtual void capture(quint64 captureId, const QString& destinationBase) = 0;
   virtual void setSetting(const QString& id, const QString& value) = 0;
 
  signals:
   void previewFrame(const QImage& image);
   void settingsChanged();
-  void captureCompleted(const QString& filePath);
+  void captureCompleted(quint64 captureId, const QString& filePath);
+  void captureFailed(quint64 captureId, const QString& message);
   void errorOccurred(const QString& message);
 };
 

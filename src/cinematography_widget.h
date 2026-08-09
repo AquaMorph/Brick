@@ -1,13 +1,11 @@
 #pragma once
 
-#include "camera.h"
+#include "capture_coordinator.h"
 #include "project.h"
 
 #include <QImage>
-#include <QTemporaryDir>
 #include <QWidget>
 
-#include <memory>
 #include <optional>
 #include <vector>
 
@@ -23,18 +21,15 @@ class CinematographyWidget : public QWidget {
   Q_OBJECT
 
  public:
-  explicit CinematographyWidget(QWidget* parent = nullptr);
+  explicit CinematographyWidget(CaptureCoordinator* captureCoordinator,
+                                QWidget* parent = nullptr);
 
   void setShot(Project* project, int sceneIndex, int shotIndex);
-  [[nodiscard]] CameraSession* cameraSession() const;
-  void setExternalCaptureActive(bool active);
-
- signals:
-  void cameraChanged(CameraSession* camera);
-  void captureStateChanged(bool capturing);
 
  private:
   struct PendingCapture {
+    quint64 requestId;
+    quint64 contextRevision;
     Project* project;
     QString projectDirectory;
     QString shotDirectory;
@@ -72,14 +67,14 @@ class CinematographyWidget : public QWidget {
   int sceneIndex_ = -1;
   int shotIndex_ = -1;
   std::vector<CameraDevice> devices_;
-  std::unique_ptr<CameraSession> camera_;
+  CaptureCoordinator* captureCoordinator_ = nullptr;
+  CameraSession* camera_ = nullptr;
   std::vector<CameraSetting> settings_;
   std::vector<TestShot> testShots_;
   std::optional<PendingCapture> pendingCapture_;
-  bool externalCaptureActive_ = false;
+  quint64 contextRevision_ = 0;
   quint64 previewLoadId_ = 0;
   QImage previewImage_;
-  QTemporaryDir captureDirectory_;
 
   QLabel* shotLabel_ = nullptr;
   QLabel* previewLabel_ = nullptr;
@@ -92,6 +87,7 @@ class CinematographyWidget : public QWidget {
   QPushButton* captureButton_ = nullptr;
   QPushButton* liveButton_ = nullptr;
   QFormLayout* settingsLayout_ = nullptr;
+  QWidget* settingsWidget_ = nullptr;
   QListWidget* gallery_ = nullptr;
   QLabel* metadataLabel_ = nullptr;
   QPushButton* restoreButton_ = nullptr;

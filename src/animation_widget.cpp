@@ -1,6 +1,5 @@
 #include "animation_widget.h"
 
-#include "cinematography_widget.h"
 #include "frame_rate.h"
 #include "playback_timing.h"
 #include "layout_constants.h"
@@ -102,9 +101,9 @@ QIcon liveViewIcon() {
 }  // namespace
 
 
-AnimationWidget::AnimationWidget(CinematographyWidget* cinematography,
+AnimationWidget::AnimationWidget(CaptureCoordinator* captureCoordinator,
                                  QWidget* parent)
-    : QWidget(parent), cinematography_(cinematography) {
+    : QWidget(parent), captureCoordinator_(captureCoordinator) {
   auto* root = new QVBoxLayout(this);
   root->setContentsMargins(20, 18, 20, 18);
   root->setSpacing(14);
@@ -234,11 +233,47 @@ AnimationWidget::AnimationWidget(CinematographyWidget* cinematography,
   playbackTimer_->setSingleShot(true);
   connect(playbackTimer_, &QTimer::timeout, this,
           [this] { advancePlayback(); });
-  connect(cinematography_, &CinematographyWidget::cameraChanged, this,
-          [this](CameraSession* camera) { attachCamera(camera); });
-  connect(cinematography_, &CinematographyWidget::captureStateChanged, this,
-          [this](bool capturing) {
-            cinematographyCaptureActive_ = capturing;
+  connect(captureCoordinator_, &CaptureCoordinator::cameraChanged, this,
+          [this](CameraSession* camera) {
+            if (camera == nullptr) {
+              cameraLabel_->setText("No camera connected");
+              liveImage_ = {};
+              static_cast<AnimationCanvas*>(canvas_)->setBaseImage(
+                  {}, "Connect a camera in Cinematography");
+            } else {
+              cameraLabel_->setText("Connected  ·  " + camera->displayName());
+            }
+            updateControls();
+          });
+  connect(captureCoordinator_, &CaptureCoordinator::previewFrame, this,
+          [this](const QImage& image) {
+            liveImage_ = image;
+            if (showingLive_ && !playbackTimer_->isActive()) {
+              static_cast<AnimationCanvas*>(canvas_)->setBaseImage(image);
+            }
+          });
+  connect(captureCoordinator_, &CaptureCoordinator::cameraError, this,
+          [this](const QString& error) { showError(error); });
+  connect(captureCoordinator_, &CaptureCoordinator::captureStateChanged, this,
+          [this](bool) { updateControls(); });
+  connect(captureCoordinator_, &CaptureCoordinator::captureCompleted, this,
+          [this](quint64 captureId, CapturePurpose purpose, const QString& path) {
+            if (purpose == CapturePurpose::AnimationFrame &&
+                pendingCapture_.has_value() &&
+                pendingCapture_->requestId == captureId) {
+              importCapture(path);
+            }
+          });
+  connect(captureCoordinator_, &CaptureCoordinator::captureFailed, this,
+          [this](quint64 captureId, CapturePurpose purpose,
+                 const QString& message) {
+            if (purpose != CapturePurpose::AnimationFrame ||
+                !pendingCapture_.has_value() ||
+                pendingCapture_->requestId != captureId) {
+              return;
+            }
+            pendingCapture_.reset();
+            showError(message);
             updateControls();
           });
   connect(captureButton_, &QPushButton::clicked, this,
@@ -318,13 +353,16 @@ AnimationWidget::AnimationWidget(CinematographyWidget* cinematography,
   connect(nextShortcut, &QShortcut::activated, this,
           [this] { navigate(1); });
 
-  attachCamera(cinematography_->cameraSession());
+  if (CameraSession* camera = captureCoordinator_->cameraSession()) {
+    cameraLabel_->setText("Connected  ·  " + camera->displayName());
+  }
   updateControls();
 }
 
 
 void AnimationWidget::setActiveTake(
     Project* project, const std::optional<Project::ActiveTake>& activeTake) {
+  ++contextRevision_;
   stopPlayback(false);
   project_ = project;
   activeTake_ = activeTake;
@@ -358,51 +396,10 @@ void AnimationWidget::setActiveTake(
 }
 
 
-void AnimationWidget::attachCamera(CameraSession* camera) {
-  camera_ = camera;
-  if (camera_ == nullptr) {
-    if (pendingCapture_.has_value()) {
-      pendingCapture_.reset();
-      cinematography_->setExternalCaptureActive(false);
-      showError("The camera disconnected before capture completed.");
-    }
-    cameraLabel_->setText("No camera connected");
-    liveImage_ = {};
-    static_cast<AnimationCanvas*>(canvas_)->setBaseImage(
-        {}, "Connect a camera in Cinematography");
-    updateControls();
-    return;
-  }
-  cameraLabel_->setText("Connected  ·  " + camera_->displayName());
-  connect(camera_, &CameraSession::previewFrame, this,
-          [this](const QImage& image) {
-            liveImage_ = image;
-            if (showingLive_ && !playbackTimer_->isActive()) {
-              static_cast<AnimationCanvas*>(canvas_)->setBaseImage(image);
-            }
-          });
-  connect(camera_, &CameraSession::captureCompleted, this,
-          [this](const QString& path) { importCapture(path); });
-  connect(camera_, &CameraSession::errorOccurred, this,
-          [this](const QString& error) {
-            if (pendingCapture_.has_value()) {
-              pendingCapture_.reset();
-              cinematography_->setExternalCaptureActive(false);
-              showError(error);
-              updateControls();
-            }
-          });
-  updateControls();
-}
-
-
 void AnimationWidget::capture() {
-  if (camera_ == nullptr || project_ == nullptr || !activeTake_.has_value() ||
-      pendingCapture_.has_value() || cinematographyCaptureActive_) {
-    return;
-  }
-  if (!captureDirectory_.isValid()) {
-    showError("Brick could not create temporary capture storage.");
+  if (!captureCoordinator_->isReady() || project_ == nullptr ||
+      !activeTake_.has_value() || pendingCapture_.has_value() ||
+      captureCoordinator_->isCapturing()) {
     return;
   }
   stopPlayback();
@@ -414,15 +411,21 @@ void AnimationWidget::capture() {
     showError(error);
     return;
   }
-  pendingCapture_ = PendingCapture{project_, project_->directory(), takePath,
-                                   take};
-  cinematography_->setExternalCaptureActive(true);
+  pendingCapture_ = PendingCapture{0, contextRevision_, project_,
+                                    project_->directory(), takePath, take};
   statusLabel_->setText("Capturing frame...");
   statusLabel_->setVisible(true);
   errorLabel_->setVisible(false);
   updateControls();
-  camera_->capture(captureDirectory_.filePath(
-      "frame-" + QString::number(QDateTime::currentMSecsSinceEpoch())));
+  const quint64 requestId = captureCoordinator_->requestCapture(
+      CapturePurpose::AnimationFrame, &error);
+  if (requestId == 0) {
+    pendingCapture_.reset();
+    showError(error);
+    updateControls();
+    return;
+  }
+  pendingCapture_->requestId = requestId;
 }
 
 
@@ -432,9 +435,9 @@ void AnimationWidget::importCapture(const QString& filePath) {
   }
   const PendingCapture capture = *pendingCapture_;
   pendingCapture_.reset();
-  cinematography_->setExternalCaptureActive(false);
   QString error;
-  if (project_ != capture.project || project_->directory() != capture.projectDirectory ||
+  if (contextRevision_ != capture.contextRevision || project_ != capture.project ||
+      project_->directory() != capture.projectDirectory ||
       project_->takeDirectory(capture.take.sceneIndex, capture.take.shotIndex,
                               capture.take.takeIndex, &error) !=
           capture.takeDirectory) {
@@ -520,8 +523,9 @@ void AnimationWidget::showLiveView() {
   const QSignalBlocker blocker(frameStrip_);
   frameStrip_->setCurrentRow(static_cast<int>(frames_.size()));
   static_cast<AnimationCanvas*>(canvas_)->setBaseImage(
-      liveImage_, camera_ == nullptr ? "Connect a camera in Cinematography"
-                                    : "Waiting for live view...");
+      liveImage_, !captureCoordinator_->isReady()
+                      ? "Connect a camera in Cinematography"
+                      : "Waiting for live view...");
   updateOnionFrame();
   frameCountLabel_->setText(
       QString("%1 frame%2").arg(frames_.size()).arg(frames_.size() == 1 ? "" : "s"));
@@ -710,9 +714,9 @@ void AnimationWidget::showPlaybackFrame(int row) {
 void AnimationWidget::updateControls() {
   const bool hasTake = project_ != nullptr && activeTake_.has_value();
   const bool capturing = pendingCapture_.has_value();
-  captureButton_->setEnabled(hasTake && camera_ != nullptr && !capturing &&
-                             !cinematographyCaptureActive_ &&
-                             !playbackTimer_->isActive());
+  captureButton_->setEnabled(hasTake && captureCoordinator_->isReady() &&
+                              !capturing && !captureCoordinator_->isCapturing() &&
+                              !playbackTimer_->isActive());
   playButton_->setEnabled(!frames_.empty() && !capturing);
   playbackQuality_->setEnabled(!playbackTimer_->isActive());
   deleteButton_->setEnabled(

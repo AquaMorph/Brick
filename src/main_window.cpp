@@ -1,6 +1,7 @@
 #include "main_window.h"
 
 #include "animation_widget.h"
+#include "capture_coordinator.h"
 #include "cinematography_widget.h"
 
 #include <QAction>
@@ -246,9 +247,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
           [this] { updateTakeActions(); });
 
   tabs->addTab(directTab, "Direct");
-  cinematographyWidget_ = new CinematographyWidget(tabs);
+  captureCoordinator_ = new CaptureCoordinator(tabs);
+  cinematographyWidget_ = new CinematographyWidget(captureCoordinator_, tabs);
   tabs->addTab(cinematographyWidget_, "Cinematography");
-  animationWidget_ = new AnimationWidget(cinematographyWidget_, tabs);
+  animationWidget_ = new AnimationWidget(captureCoordinator_, tabs);
   tabs->addTab(animationWidget_, "Animation");
   setCentralWidget(tabs);
 

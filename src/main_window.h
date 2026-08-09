@@ -11,6 +11,7 @@ class QLabel;
 class QPushButton;
 class CinematographyWidget;
 class AnimationWidget;
+class CaptureCoordinator;
 
 class MainWindow : public QMainWindow {
  public:
@@ -58,6 +59,7 @@ class MainWindow : public QMainWindow {
   QPushButton* newTakeButton_ = nullptr;
   QPushButton* deleteTakeButton_ = nullptr;
   QPushButton* selectTakeButton_ = nullptr;
+  CaptureCoordinator* captureCoordinator_ = nullptr;
   CinematographyWidget* cinematographyWidget_ = nullptr;
   AnimationWidget* animationWidget_ = nullptr;
 };
