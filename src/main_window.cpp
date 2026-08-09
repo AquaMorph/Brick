@@ -22,6 +22,7 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QSettings>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -80,6 +81,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
   auto* tabs = new QTabWidget(this);
   tabs->setDocumentMode(true);
+  tabs->tabBar()->setFocusPolicy(Qt::NoFocus);
 
   auto* directTab = new QWidget(tabs);
   auto* directLayout = new QVBoxLayout(directTab);
