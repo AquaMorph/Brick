@@ -1,6 +1,6 @@
 #pragma once
 
-#include "camera.h"
+#include "../camera.h"
 
 #include <memory>
 #include <vector>

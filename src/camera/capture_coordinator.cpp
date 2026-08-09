@@ -1,5 +1,7 @@
 #include "capture_coordinator.h"
 
+#include "camera_registry.h"
+
 #include <QMetaObject>
 #include <QUuid>
 

@@ -39,11 +39,20 @@ target_include_directories(brick_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(brick_core PUBLIC Qt6::Core PRIVATE Qt6::Gui)
 
 qt_add_library(brick_camera STATIC
-  src/camera.cpp
-  src/camera.h
-  src/capture_coordinator.cpp
-  src/capture_coordinator.h
+  src/camera/camera.h
+  src/camera/camera_registry.cpp
+  src/camera/camera_registry.h
+  src/camera/capture_coordinator.cpp
+  src/camera/capture_coordinator.h
+  src/camera/webcam/webcam_camera.cpp
+  src/camera/webcam/webcam_camera.h
 )
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_sources(brick_camera PRIVATE
+    src/camera/webcam/v4l2_controls.cpp
+    src/camera/webcam/v4l2_controls.h
+  )
+endif()
 target_include_directories(brick_camera PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(brick_camera
   PUBLIC Qt6::Core Qt6::Gui
@@ -105,7 +114,10 @@ if(BRICK_ENABLE_CANON_EDSDK)
   if(NOT BRICK_EDSDK_LIBRARY OR NOT EXISTS "${BRICK_EDSDK_LIBRARY}")
     message(FATAL_ERROR "A Canon EDSDK library was not found for this platform.")
   endif()
-  target_sources(brick_camera PRIVATE src/canon_camera.cpp src/canon_camera.h)
+  target_sources(brick_camera PRIVATE
+    src/camera/canon/canon_camera.cpp
+    src/camera/canon/canon_camera.h
+  )
   target_include_directories(brick_camera PRIVATE "${BRICK_EDSDK_INCLUDE_DIR}")
   target_link_libraries(brick_camera PRIVATE "${BRICK_EDSDK_LIBRARY}")
   target_compile_definitions(brick_camera PRIVATE BRICK_HAS_CANON_EDSDK)

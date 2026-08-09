@@ -1,4 +1,4 @@
-#include "camera.h"
+#include "webcam_camera.h"
 
 #include <QCamera>
 #include <QCameraDevice>
@@ -16,16 +16,7 @@
 #include <utility>
 
 #ifdef Q_OS_LINUX
-#include <fcntl.h>
-#include <linux/videodev2.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
-
-#include <optional>
-#endif
-
-#ifdef BRICK_HAS_CANON_EDSDK
-#include "canon_camera.h"
+#include "v4l2_controls.h"
 #endif
 
 namespace {
@@ -142,35 +133,6 @@ QString formatLabel(const QCameraFormat& format) {
   return resolutionValue(format.resolution()) + " @ " + rate + " fps";
 }
 
-#ifdef Q_OS_LINUX
-struct V4l2Control {
-  quint32 id;
-  int value;
-  int minimum;
-  int maximum;
-  int step;
-};
-
-std::optional<V4l2Control> v4l2Control(int descriptor, quint32 id) {
-  if (descriptor < 0) {
-    return std::nullopt;
-  }
-  v4l2_queryctrl query{};
-  query.id = id;
-  if (ioctl(descriptor, VIDIOC_QUERYCTRL, &query) < 0 ||
-      query.flags & (V4L2_CTRL_FLAG_DISABLED | V4L2_CTRL_FLAG_READ_ONLY)) {
-    return std::nullopt;
-  }
-  v4l2_control control{};
-  control.id = id;
-  if (ioctl(descriptor, VIDIOC_G_CTRL, &control) < 0) {
-    return std::nullopt;
-  }
-  return V4l2Control{id, control.value, query.minimum, query.maximum,
-                     std::max(1, query.step)};
-}
-#endif
-
 class WebcamSession final : public CameraSession {
  public:
   WebcamSession(QCameraDevice device, QObject* parent)
@@ -179,18 +141,7 @@ class WebcamSession final : public CameraSession {
     capture_ = std::make_unique<QImageCapture>();
     sink_ = std::make_unique<QVideoSink>();
 #ifdef Q_OS_LINUX
-    const QString id = QString::fromUtf8(device_.id());
-    const int pathStart = id.indexOf("/dev/video");
-    if (pathStart >= 0) {
-      const QByteArray path = id.sliced(pathStart).toUtf8();
-      v4l2Descriptor_ = open(path.constData(), O_RDWR | O_NONBLOCK);
-    }
-    if (v4l2Control(v4l2Descriptor_, V4L2_CID_EXPOSURE_ABSOLUTE)) {
-      v4l2_control automaticExposure{};
-      automaticExposure.id = V4L2_CID_EXPOSURE_AUTO;
-      automaticExposure.value = V4L2_EXPOSURE_MANUAL;
-      ioctl(v4l2Descriptor_, VIDIOC_S_CTRL, &automaticExposure);
-    }
+    v4l2Controls_ = std::make_unique<V4l2Controls>(QString::fromUtf8(device_.id()));
 #endif
     mediaSession_.setCamera(camera_.get());
     mediaSession_.setImageCapture(capture_.get());
@@ -275,13 +226,7 @@ class WebcamSession final : public CameraSession {
             [this] { emit settingsChanged(); });
   }
 
-  ~WebcamSession() override {
-#ifdef Q_OS_LINUX
-    if (v4l2Descriptor_ >= 0) {
-      close(v4l2Descriptor_);
-    }
-#endif
-  }
+  ~WebcamSession() override = default;
 
   [[nodiscard]] QString backend() const override { return "webcam"; }
   [[nodiscard]] QString deviceId() const override {
@@ -314,7 +259,7 @@ class WebcamSession final : public CameraSession {
     }
 
 #ifdef Q_OS_LINUX
-    if (const auto gain = v4l2Control(v4l2Descriptor_, V4L2_CID_GAIN)) {
+    if (const auto gain = v4l2Controls_->gain()) {
       CameraSetting setting{"gain", "Gain", QString::number(gain->value), {}};
       setting.type = CameraSettingType::IntegerRange;
       setting.minimum = gain->minimum;
@@ -323,8 +268,7 @@ class WebcamSession final : public CameraSession {
       result.push_back(std::move(setting));
     }
 
-    const auto nativeExposure =
-        v4l2Control(v4l2Descriptor_, V4L2_CID_EXPOSURE_ABSOLUTE);
+    const auto nativeExposure = v4l2Controls_->exposure();
     if (nativeExposure) {
       CameraSetting setting{"exposure", "Exposure",
                             QString::number(nativeExposure->value), {}};
@@ -564,11 +508,9 @@ class WebcamSession final : public CameraSession {
       camera_->setZoomFactor(value.toFloat(&converted));
 #ifdef Q_OS_LINUX
     } else if (id == "gain" || id == "exposure") {
-      v4l2_control control{};
-      control.id = id == "gain" ? V4L2_CID_GAIN : V4L2_CID_EXPOSURE_ABSOLUTE;
-      control.value = value.toInt(&converted);
-      converted = converted && v4l2Descriptor_ >= 0 &&
-                  ioctl(v4l2Descriptor_, VIDIOC_S_CTRL, &control) == 0;
+      const int nativeValue = value.toInt(&converted);
+      converted = converted && (id == "gain" ? v4l2Controls_->setGain(nativeValue)
+                                               : v4l2Controls_->setExposure(nativeValue));
 #endif
     } else if (id == "videoFormat") {
       const auto formats = device_.videoFormats();
@@ -609,19 +551,15 @@ class WebcamSession final : public CameraSession {
   QMediaCaptureSession mediaSession_;
   std::map<int, quint64> captureIds_;
 #ifdef Q_OS_LINUX
-  int v4l2Descriptor_ = -1;
+  std::unique_ptr<V4l2Controls> v4l2Controls_;
 #endif
 };
 
 }  // namespace
 
 
-std::vector<CameraDevice> availableCameras() {
+std::vector<CameraDevice> availableWebcams() {
   std::vector<CameraDevice> devices;
-#ifdef BRICK_HAS_CANON_EDSDK
-  const auto canonDevices = availableCanonCameras();
-  devices.insert(devices.end(), canonDevices.begin(), canonDevices.end());
-#endif
   for (const QCameraDevice& device : QMediaDevices::videoInputs()) {
     devices.push_back(
         {"webcam", QString::fromUtf8(device.id()), device.description()});
@@ -630,16 +568,8 @@ std::vector<CameraDevice> availableCameras() {
 }
 
 
-std::unique_ptr<CameraSession> openCamera(const CameraDevice& device,
+std::unique_ptr<CameraSession> openWebcam(const CameraDevice& device,
                                           QObject* parent) {
-#ifdef BRICK_HAS_CANON_EDSDK
-  if (device.backend == "canon") {
-    return openCanonCamera(device, parent);
-  }
-#endif
-  if (device.backend != "webcam") {
-    return nullptr;
-  }
   const auto devices = QMediaDevices::videoInputs();
   const auto match = std::find_if(
       devices.begin(), devices.end(), [&device](const QCameraDevice& candidate) {

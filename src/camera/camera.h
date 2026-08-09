@@ -3,7 +3,8 @@
 #include <QImage>
 #include <QObject>
 #include <QString>
-#include <memory>
+#include <QtGlobal>
+
 #include <vector>
 
 struct CameraDevice {
@@ -59,7 +60,3 @@ class CameraSession : public QObject {
   void captureFailed(quint64 captureId, const QString& message);
   void errorOccurred(const QString& message);
 };
-
-[[nodiscard]] std::vector<CameraDevice> availableCameras();
-[[nodiscard]] std::unique_ptr<CameraSession> openCamera(const CameraDevice& device,
-                                                        QObject* parent = nullptr);

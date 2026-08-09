@@ -1,7 +1,7 @@
 #include "main_window.h"
 
 #include "animation_widget.h"
-#include "capture_coordinator.h"
+#include "camera/capture_coordinator.h"
 #include "cinematography_widget.h"
 
 #include <QAction>

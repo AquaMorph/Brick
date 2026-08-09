@@ -1,6 +1,6 @@
 #pragma once
 
-#include "capture_coordinator.h"
+#include "camera/capture_coordinator.h"
 #include "project.h"
 
 #include <QElapsedTimer>
