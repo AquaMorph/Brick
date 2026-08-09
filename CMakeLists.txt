@@ -36,6 +36,9 @@ qt_add_executable(brick
   src/cinematography_widget.cpp
   src/cinematography_widget.h
   src/project.cpp
+  src/project_media.cpp
+  src/project_storage.cpp
+  src/project_storage_internal.h
   src/project.h
 )
 
@@ -111,6 +114,9 @@ if(BUILD_TESTING)
   add_executable(project_tests
     tests/project_test.cpp
     src/project.cpp
+    src/project_media.cpp
+    src/project_storage.cpp
+    src/project_storage_internal.h
     src/project.h
     src/frame_rate.h
     src/playback_timing.h
