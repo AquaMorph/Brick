@@ -236,7 +236,7 @@ CinematographyWidget::CinematographyWidget(
   root->addLayout(workspace, 1);
 
   connect(cameraCombo_, &QComboBox::currentIndexChanged, this,
-          [this](int index) { selectCamera(index); });
+          [this](int index) { (void)selectCamera(index); });
   connect(cameraRefreshButton_, &QPushButton::clicked, this,
           [this] { refreshCameras(); });
   connect(captureButton_, &QPushButton::clicked, this, [this] { capture(); });
@@ -337,13 +337,13 @@ void CinematographyWidget::refreshCameras() {
     }
   }
   cameraCombo_->setCurrentIndex(selected);
-  selectCamera(selected);
+  (void)selectCamera(selected);
   setOperationStatus({});
 }
 
-void CinematographyWidget::selectCamera(int index) {
+bool CinematographyWidget::selectCamera(int index) {
   if (captureCoordinator_->isCapturing()) {
-    return;
+    return false;
   }
   setOperationStatus({});
   clearError();
@@ -357,14 +357,14 @@ void CinematographyWidget::selectCamera(int index) {
     setLivePreview(false);
     setConnectionStatus(devices_.empty() ? "No cameras found" : "No camera selected", false);
     updatePreview({}, "Connect or select a camera");
-    return;
+    return true;
   }
 
   QString selectionError;
   if (!captureCoordinator_->selectCamera(devices_[index - 1], &selectionError)) {
     setConnectionStatus(devices_[index - 1].displayName + "  ·  Connection failed", false);
     showError(selectionError);
-    return;
+    return false;
   }
   camera_ = captureCoordinator_->cameraSession();
   setConnectionStatus(camera_->displayName(), true);
@@ -372,6 +372,7 @@ void CinematographyWidget::selectCamera(int index) {
   rebuildSettings();
   saveCameraSettings();
   showLiveView();
+  return true;
 }
 
 void CinematographyWidget::refreshSettings() {
@@ -589,16 +590,23 @@ void CinematographyWidget::restoreShotSettings() {
   if (device != devices_.end()) {
     const int comboIndex = static_cast<int>(std::distance(devices_.begin(), device)) + 1;
     if (cameraCombo_->currentIndex() != comboIndex) {
+      QSignalBlocker blocker(cameraCombo_);
       cameraCombo_->setCurrentIndex(comboIndex);
+      if (!selectCamera(comboIndex)) {
+        return;
+      }
     }
   }
-  if (camera_ && camera_->backend() == saved->backend && camera_->deviceId() == saved->deviceId) {
-    for (const auto& [id, value] : saved->settings) {
-      camera_->setSetting(id, value);
-    }
-    rebuildSettings();
-    saveCameraSettings();
+  if (camera_ == nullptr || camera_->backend() != saved->backend ||
+      camera_->deviceId() != saved->deviceId) {
+    showError("The saved camera could not be connected; its settings were not restored.");
+    return;
   }
+  for (const auto& [id, value] : saved->settings) {
+    camera_->setSetting(id, value);
+  }
+  rebuildSettings();
+  saveCameraSettings();
 }
 
 void CinematographyWidget::capture() {
