@@ -38,6 +38,14 @@ struct AnimationFrame {
   bool operator==(const AnimationFrame&) const = default;
 };
 
+struct CaptureDestination {
+  QString projectDirectory;
+  QString projectId;
+  QString shotId;
+  QString takeId;
+};
+
+
 class Project {
  public:
   struct ActiveTake {
@@ -58,6 +66,12 @@ class Project {
   [[nodiscard]] const std::vector<QString>& shots(int sceneIndex) const;
   [[nodiscard]] int takeCount(int sceneIndex, int shotIndex) const;
   [[nodiscard]] const std::optional<ActiveTake>& activeTake() const;
+  // Pass takeIndex = -1 for test shots, which have an empty takeId.
+  [[nodiscard]] std::optional<CaptureDestination> captureDestination(
+      int sceneIndex, int shotIndex, int takeIndex, QString* error) const;
+  // Reopen before resolving; returns indexes in the fresh on-disk hierarchy.
+  [[nodiscard]] std::optional<ActiveTake> resolveCaptureDestination(
+      const CaptureDestination& destination, QString* error) const;
   [[nodiscard]] QString shotDirectory(int sceneIndex, int shotIndex,
                                       QString* error = nullptr) const;
   [[nodiscard]] QString testShotDirectory(int sceneIndex, int shotIndex,
@@ -91,32 +105,43 @@ class Project {
   bool saveCurrentShotCameraSettings(int sceneIndex, int shotIndex,
                                      const ShotCameraSettings& settings,
                                      QString* error);
+  // On failure, retrySafe is true only if no new import outputs remain.
   std::optional<TestShot> importTestShot(
       int sceneIndex, int shotIndex, const QString& capturedImagePath,
       const QDateTime& capturedUtc, const QString& cameraDisplayName,
       const ShotCameraSettings& camera,
       const std::map<QString, QString>& capturedSettings,
-      const std::map<QString, QString>& displaySettings, QString* error);
+      const std::map<QString, QString>& displaySettings, QString* error,
+      bool* retrySafe = nullptr);
   bool deleteTestShot(int sceneIndex, int shotIndex, const QString& fileName,
                       QString* error);
   std::optional<AnimationFrame> importFrame(
       int sceneIndex, int shotIndex, int takeIndex,
       const QString& capturedImagePath, const QDateTime& capturedUtc,
-      QString* error);
+      QString* error, bool* retrySafe = nullptr);
   bool deleteFrame(int sceneIndex, int shotIndex, int takeIndex, int number,
                    QString* error);
   bool saveTakeFrameRate(int sceneIndex, int shotIndex, int takeIndex,
                          int framesPerSecond, QString* error);
 
  private:
-  Project(QString name, QString directory, std::vector<QString> scenes = {},
+  struct ShotIdentity {
+    QString id;
+    std::vector<QString> takeIds;
+  };
+
+  Project(QString name, QString directory, QString id,
+           std::vector<QString> scenes = {},
            std::vector<std::vector<QString>> shots = {},
            std::vector<std::vector<int>> takeCounts = {},
-           std::optional<ActiveTake> activeTake = std::nullopt);
+           std::optional<ActiveTake> activeTake = std::nullopt,
+           std::vector<std::vector<ShotIdentity>> identities = {});
   bool saveActiveTake(QString* error);
 
   QString name_;
   QString directory_;
+  QString id_;
+  std::vector<std::vector<ShotIdentity>> identities_;
   std::vector<QString> scenes_;
   std::vector<std::vector<QString>> shots_;
   std::vector<std::vector<int>> takeCounts_;

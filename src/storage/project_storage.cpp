@@ -9,6 +9,7 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QSet>
 #include <QUuid>
 
 #include <algorithm>
@@ -29,6 +30,13 @@ constexpr auto kLegacyTestsDirectoryName = "test_shots";
 using project_storage::kShotConfigFileName;
 using project_storage::kTakeConfigFileName;
 using project_storage::setError;
+
+QString readIdentity(QSettings& config) {
+  const QString id = config.value("id").toString();
+  const QUuid uuid(id);
+  return !uuid.isNull() && uuid.toString(QUuid::WithoutBraces) == id
+             ? id : QString{};
+}
 
 bool isValidProjectName(const QString& name) {
   static const QRegularExpression validName(R"(^[A-Za-z0-9]+(?: +[A-Za-z0-9]+)*$)");
@@ -79,7 +87,7 @@ QString resolveTestsDirectory(QDir shot, bool create, QString* error) {
   return shot.filePath(kTestsDirectoryName);
 }
 
-bool createTakeDirectory(QDir shot, int index, QString* error) {
+bool createTakeDirectory(QDir shot, int index, QString& id, QString* error) {
   const QString takeDirectory = directoryNameForTake(index);
   if (!shot.mkdir(takeDirectory)) {
     setError(error, "Brick could not create the take folder.");
@@ -97,6 +105,8 @@ bool createTakeDirectory(QDir shot, int index, QString* error) {
   const QString configPath = take.filePath(kTakeConfigFileName);
   QSettings config(configPath, QSettings::IniFormat);
   config.beginGroup("Take");
+  id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  config.setValue("id", id);
   config.setValue("formatVersion", kTakeFormatVersion);
   config.setValue("createdUtc",
                    QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
@@ -196,6 +206,8 @@ std::optional<Project> Project::create(const QString& parentDirectory,
   const QString configPath = QDir(projectDirectory).filePath(kConfigFileName);
   QSettings config(configPath, QSettings::IniFormat);
   config.beginGroup("Project");
+  const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  config.setValue("id", id);
   config.setValue("name", name);
   config.setValue("formatVersion", kProjectFormatVersion);
   config.setValue("createdUtc", QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
@@ -209,7 +221,7 @@ std::optional<Project> Project::create(const QString& parentDirectory,
     return std::nullopt;
   }
 
-  return Project(name, QDir(projectDirectory).absolutePath());
+  return Project(name, QDir(projectDirectory).absolutePath(), id);
 }
 
 
@@ -228,7 +240,9 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
   }
 
   QSettings config(configPath, QSettings::IniFormat);
+  config.sync();
   config.beginGroup("Project");
+  const QString id = readIdentity(config);
   const QString name = config.value("name").toString();
   const int formatVersion = config.value("formatVersion").toInt();
   const bool hasActiveScene = config.contains("activeSceneIndex");
@@ -260,6 +274,10 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
     setError(error, "This project uses an unsupported format version.");
     return std::nullopt;
   }
+  if (id.isEmpty()) {
+    setError(error, "project.conf does not contain a valid project identity.");
+    return std::nullopt;
+  }
   if ((hasActiveScene || hasActiveShot || hasActiveTake) &&
       !(hasActiveScene && hasActiveShot && hasActiveTake)) {
     setError(error, "project.conf contains an incomplete active take.");
@@ -273,6 +291,8 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
   std::vector<QString> scenes;
   std::vector<std::vector<QString>> shots;
   std::vector<std::vector<int>> takeCounts;
+  std::vector<std::vector<ShotIdentity>> identities;
+  QSet<QString> usedIds{id};
   scenes.reserve(sceneDirectories.size());
   shots.reserve(sceneDirectories.size());
   takeCounts.reserve(sceneDirectories.size());
@@ -287,6 +307,7 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
     QSettings sceneConfig(
         project.filePath(sceneDirectory + '/' + kSceneConfigFileName),
         QSettings::IniFormat);
+    sceneConfig.sync();
     sceneConfig.beginGroup("Scene");
     const QString sceneName = sceneConfig.value("name").toString();
     const int sceneFormatVersion = sceneConfig.value("formatVersion").toInt();
@@ -306,6 +327,7 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
         QDir::Name);
     std::vector<QString> sceneShots;
     std::vector<int> sceneTakeCounts;
+    std::vector<ShotIdentity> sceneIdentities;
     sceneShots.reserve(shotDirectories.size());
     sceneTakeCounts.reserve(shotDirectories.size());
     for (int shotIndex = 0; shotIndex < shotDirectories.size(); ++shotIndex) {
@@ -319,11 +341,14 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
       QSettings shotConfig(
           scene.filePath(shotDirectory + '/' + kShotConfigFileName),
           QSettings::IniFormat);
+      shotConfig.sync();
       shotConfig.beginGroup("Shot");
+      ShotIdentity identity{readIdentity(shotConfig), {}};
       const QString shotName = shotConfig.value("name").toString();
       const int shotFormatVersion = shotConfig.value("formatVersion").toInt();
       shotConfig.endGroup();
       if (shotConfig.status() != QSettings::NoError ||
+          identity.id.isEmpty() || usedIds.contains(identity.id) ||
           !isValidProjectName(shotName) ||
           shotFormatVersion != kShotFormatVersion ||
           shotDirectory != directoryNameForShot(shotIndex, shotName)) {
@@ -331,6 +356,7 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
         return std::nullopt;
       }
       sceneShots.push_back(shotName);
+      usedIds.insert(identity.id);
 
       QDir shot(scene.filePath(shotDirectory));
       resolveTestsDirectory(shot, false, nullptr);
@@ -347,20 +373,27 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
         QSettings takeConfig(shot.filePath(takeDirectory + '/' +
                                            kTakeConfigFileName),
                              QSettings::IniFormat);
+        takeConfig.sync();
         takeConfig.beginGroup("Take");
+        const QString takeId = readIdentity(takeConfig);
         const int takeFormatVersion =
             takeConfig.value("formatVersion").toInt();
         takeConfig.endGroup();
         if (takeConfig.status() != QSettings::NoError ||
+            takeId.isEmpty() || usedIds.contains(takeId) ||
             takeFormatVersion != kTakeFormatVersion) {
           setError(error, "A shot contains an invalid take.");
           return std::nullopt;
         }
+        usedIds.insert(takeId);
+        identity.takeIds.push_back(takeId);
       }
+      sceneIdentities.push_back(std::move(identity));
       sceneTakeCounts.push_back(takeDirectories.size());
     }
     shots.push_back(std::move(sceneShots));
     takeCounts.push_back(std::move(sceneTakeCounts));
+    identities.push_back(std::move(sceneIdentities));
   }
 
   if (activeTake.has_value() &&
@@ -376,8 +409,71 @@ std::optional<Project> Project::open(const QString& directory, QString* error) {
     return std::nullopt;
   }
 
-  return Project(name, projectDirectory, std::move(scenes), std::move(shots),
-                 std::move(takeCounts), activeTake);
+  return Project(name, projectDirectory, id, std::move(scenes), std::move(shots),
+                 std::move(takeCounts), activeTake, std::move(identities));
+}
+
+
+std::optional<CaptureDestination> Project::captureDestination(
+    int sceneIndex, int shotIndex, int takeIndex, QString* error) const {
+  if (sceneIndex < 0 || sceneIndex >= static_cast<int>(identities_.size()) ||
+      shotIndex < 0 ||
+      shotIndex >= static_cast<int>(identities_[sceneIndex].size()) ||
+      takeIndex < -1 ||
+      takeIndex >= static_cast<int>(identities_[sceneIndex][shotIndex].takeIds.size())) {
+    setError(error, "The selected capture destination does not exist.");
+    return std::nullopt;
+  }
+
+  const auto& shot = identities_[sceneIndex][shotIndex];
+  CaptureDestination destination{directory_, id_, shot.id,
+                                 takeIndex == -1 ? QString{} : shot.takeIds[takeIndex]};
+  if (!resolveCaptureDestination(destination, error)) {
+    return std::nullopt;
+  }
+  return destination;
+}
+
+
+std::optional<Project::ActiveTake> Project::resolveCaptureDestination(
+    const CaptureDestination& destination, QString* error) const {
+  const QString canonicalDirectory = QFileInfo(directory_).canonicalFilePath();
+  if (canonicalDirectory.isEmpty() || destination.projectDirectory.isEmpty() ||
+      canonicalDirectory != QFileInfo(destination.projectDirectory).canonicalFilePath() ||
+      destination.projectId != id_) {
+    setError(error, "The capture destination belongs to a different project.");
+    return std::nullopt;
+  }
+
+  // Never resolve against cached indexes: folders can have been renumbered or replaced.
+  const auto fresh = Project::open(directory_, error);
+  if (!fresh) {
+    return std::nullopt;
+  }
+  if (fresh->id_ != destination.projectId) {
+    setError(error, "The capture destination project has been replaced.");
+    return std::nullopt;
+  }
+  for (int sceneIndex = 0; sceneIndex < static_cast<int>(fresh->identities_.size());
+       ++sceneIndex) {
+    const auto& shots = fresh->identities_[sceneIndex];
+    for (int shotIndex = 0; shotIndex < static_cast<int>(shots.size()); ++shotIndex) {
+      const auto& shot = shots[shotIndex];
+      if (shot.id != destination.shotId) {
+        continue;
+      }
+      if (destination.takeId.isEmpty()) {
+        return ActiveTake{sceneIndex, shotIndex, -1};
+      }
+      const auto take = std::find(shot.takeIds.begin(), shot.takeIds.end(), destination.takeId);
+      if (take != shot.takeIds.end()) {
+        return ActiveTake{sceneIndex, shotIndex,
+                          static_cast<int>(take - shot.takeIds.begin())};
+      }
+    }
+  }
+  setError(error, "The capture destination no longer exists.");
+  return std::nullopt;
 }
 
 
@@ -480,6 +576,7 @@ bool Project::createScene(const QString& name, QString* error) {
   scenes_.push_back(name);
   shots_.emplace_back();
   takeCounts_.emplace_back();
+  identities_.emplace_back();
   return true;
 }
 
@@ -572,6 +669,7 @@ bool Project::deleteScene(int index, QString* error) {
   scenes_.erase(scenes_.begin() + index);
   shots_.erase(shots_.begin() + index);
   takeCounts_.erase(takeCounts_.begin() + index);
+  identities_.erase(identities_.begin() + index);
   QDir(project.filePath(tombstone)).removeRecursively();
   if (activeTake_.has_value()) {
     if (activeTake_->sceneIndex == index) {
@@ -620,6 +718,9 @@ bool Project::moveScene(int from, int to, QString* error) {
   auto movedTakeCounts = std::move(takeCounts_[from]);
   takeCounts_.erase(takeCounts_.begin() + from);
   takeCounts_.insert(takeCounts_.begin() + to, std::move(movedTakeCounts));
+  auto movedIdentities = std::move(identities_[from]);
+  identities_.erase(identities_.begin() + from);
+  identities_.insert(identities_.begin() + to, std::move(movedIdentities));
   if (activeTake_.has_value()) {
     if (activeTake_->sceneIndex == from) {
       activeTake_->sceneIndex = to;
@@ -679,6 +780,8 @@ bool Project::createShot(int sceneIndex, const QString& name, QString* error) {
       scene.filePath(shotDirectory + '/' + kShotConfigFileName);
   QSettings config(configPath, QSettings::IniFormat);
   config.beginGroup("Shot");
+  ShotIdentity identity{QUuid::createUuid().toString(QUuid::WithoutBraces), {}};
+  config.setValue("id", identity.id);
   config.setValue("name", name);
   config.setValue("formatVersion", kShotFormatVersion);
   config.setValue("createdUtc",
@@ -691,13 +794,16 @@ bool Project::createShot(int sceneIndex, const QString& name, QString* error) {
     return false;
   }
 
-  if (!createTakeDirectory(shot, 0, error)) {
+  QString takeId;
+  if (!createTakeDirectory(shot, 0, takeId, error)) {
     shot.removeRecursively();
     return false;
   }
 
   sceneShots.push_back(name);
   takeCounts_[sceneIndex].push_back(1);
+  identity.takeIds.push_back(takeId);
+  identities_[sceneIndex].push_back(std::move(identity));
   return true;
 }
 
@@ -799,6 +905,7 @@ bool Project::deleteShot(int sceneIndex, int shotIndex, QString* error) {
 
   sceneShots.erase(sceneShots.begin() + shotIndex);
   takeCounts_[sceneIndex].erase(takeCounts_[sceneIndex].begin() + shotIndex);
+  identities_[sceneIndex].erase(identities_[sceneIndex].begin() + shotIndex);
   QDir(scene.filePath(tombstone)).removeRecursively();
   if (activeTake_.has_value() && activeTake_->sceneIndex == sceneIndex) {
     if (activeTake_->shotIndex == shotIndex) {
@@ -854,6 +961,10 @@ bool Project::moveShot(int sceneIndex, int from, int to, QString* error) {
   takeCounts_[sceneIndex].erase(takeCounts_[sceneIndex].begin() + from);
   takeCounts_[sceneIndex].insert(takeCounts_[sceneIndex].begin() + to,
                                  movedTakeCount);
+  auto& identities = identities_[sceneIndex];
+  auto movedIdentity = std::move(identities[from]);
+  identities.erase(identities.begin() + from);
+  identities.insert(identities.begin() + to, std::move(movedIdentity));
   if (activeTake_.has_value() && activeTake_->sceneIndex == sceneIndex) {
     if (activeTake_->shotIndex == from) {
       activeTake_->shotIndex = to;
@@ -887,11 +998,13 @@ bool Project::createTake(int sceneIndex, int shotIndex, QString* error) {
   QDir shot(QDir(directory_).filePath(
       directoryNameForScene(sceneIndex, scenes_[sceneIndex]) + '/' +
       directoryNameForShot(shotIndex, shots_[sceneIndex][shotIndex])));
-  if (!createTakeDirectory(shot, count, error)) {
+  QString takeId;
+  if (!createTakeDirectory(shot, count, takeId, error)) {
     return false;
   }
 
   ++count;
+  identities_[sceneIndex][shotIndex].takeIds.push_back(takeId);
   return true;
 }
 
@@ -931,6 +1044,8 @@ bool Project::deleteTake(int sceneIndex, int shotIndex, int takeIndex,
   }
 
   --count;
+  auto& takeIds = identities_[sceneIndex][shotIndex].takeIds;
+  takeIds.erase(takeIds.begin() + takeIndex);
   QDir(shot.filePath(tombstone)).removeRecursively();
   if (activeTake_.has_value() && activeTake_->sceneIndex == sceneIndex &&
       activeTake_->shotIndex == shotIndex) {

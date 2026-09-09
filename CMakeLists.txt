@@ -34,6 +34,8 @@ qt_add_library(brick_core STATIC
   src/settings/frame_rate.h
   src/storage/project_storage.cpp
   src/storage/project_storage_internal.h
+  src/storage/capture_recovery.cpp
+  src/storage/capture_recovery.h
 )
 target_include_directories(brick_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(brick_core PUBLIC Qt6::Core PRIVATE Qt6::Gui)
@@ -55,7 +57,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 target_include_directories(brick_camera PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(brick_camera
-  PUBLIC Qt6::Core Qt6::Gui
+  PUBLIC brick_core Qt6::Core Qt6::Gui
   PRIVATE Qt6::Multimedia
 )
 
@@ -157,4 +159,10 @@ if(BUILD_TESTING)
   )
   target_link_libraries(project_tests PRIVATE brick_core Qt6::Gui)
   add_test(NAME project_tests COMMAND project_tests)
+  add_executable(capture_destination_tests tests/capture_destination_test.cpp)
+  target_link_libraries(capture_destination_tests PRIVATE brick_core Qt6::Gui)
+  add_test(NAME capture_destination_tests COMMAND capture_destination_tests)
+  add_executable(capture_recovery_tests tests/capture_recovery_test.cpp)
+  target_link_libraries(capture_recovery_tests PRIVATE brick_core Qt6::Gui)
+  add_test(NAME capture_recovery_tests COMMAND capture_recovery_tests)
 endif()

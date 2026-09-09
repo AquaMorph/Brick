@@ -4,6 +4,27 @@ Brick is a cross-platform stop motion application for Linux, Windows, and
 macOS. The current project is the initial application shell: it opens an empty
 black window ready for the program's work-mode interface.
 
+## Capture Recovery
+
+Captures are downloaded into persistent `capture-recovery` storage under Qt's
+application-local data directory before being imported into a project. Each job
+records its original project, shot, and take identity, capture time, and camera
+metadata. Changing the displayed project or selection does not redirect a capture.
+Renames and reordering preserve destination identity; deleting and recreating a
+destination does not.
+
+Use **File > Recover Captures** to retry import, save assets to another folder, or
+explicitly discard them. The dialog also opens on startup when recovery jobs remain.
+Saving elsewhere never overwrites files and retains recovery originals until you
+discard them. Interrupted downloads remain available for saving, but may be incomplete.
+If an import was interrupted or its rollback could not be verified, retry is disabled
+to avoid duplicates; inspect the project and save or discard the retained assets.
+This protects against application exit and import failures, not all power-loss or
+filesystem failures.
+
+Project, shot, and take configs now require persistent UUID identity fields. Projects
+created before these fields were introduced are not automatically migrated.
+
 ## Requirements
 
 - A C++20 compiler

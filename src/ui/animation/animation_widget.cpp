@@ -7,7 +7,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTime>
-#include <QFile>
+#include <QFileInfo>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QKeySequence>
@@ -405,20 +405,37 @@ void AnimationWidget::capture() {
   stopPlayback();
   QString error;
   const auto take = *activeTake_;
-  const QString takePath = project_->takeDirectory(
+  const auto destination = project_->captureDestination(
       take.sceneIndex, take.shotIndex, take.takeIndex, &error);
-  if (takePath.isEmpty()) {
+  if (!destination.has_value()) {
     showError(error);
     return;
   }
-  pendingCapture_ = PendingCapture{0, contextRevision_, project_,
-                                    project_->directory(), takePath, take};
+  TestShot metadata;
+  metadata.capturedUtc = QDateTime::currentDateTimeUtc();
+  if (const CameraSession* camera = captureCoordinator_->cameraSession()) {
+    metadata.cameraDisplayName = camera->displayName();
+    metadata.cameraBackend = camera->backend();
+    metadata.cameraDeviceId = camera->deviceId();
+    for (const CameraSetting& setting : camera->settings()) {
+      metadata.capturedSettings.insert_or_assign(setting.id, setting.value);
+      const auto choice = std::find_if(
+          setting.choices.begin(), setting.choices.end(),
+          [&setting](const CameraSettingChoice& candidate) {
+            return candidate.value == setting.value;
+          });
+      metadata.displaySettings.insert_or_assign(
+          setting.label, choice == setting.choices.end()
+                             ? setting.value + setting.suffix : choice->label);
+    }
+  }
+  pendingCapture_ = PendingCapture{0, contextRevision_};
   statusLabel_->setText("Capturing frame...");
   statusLabel_->setVisible(true);
   errorLabel_->setVisible(false);
   updateControls();
   const quint64 requestId = captureCoordinator_->requestCapture(
-      CapturePurpose::AnimationFrame, &error);
+      CapturePurpose::AnimationFrame, *destination, metadata, &error);
   if (requestId == 0) {
     pendingCapture_.reset();
     showError(error);
@@ -436,30 +453,29 @@ void AnimationWidget::importCapture(const QString& filePath) {
   const PendingCapture capture = *pendingCapture_;
   pendingCapture_.reset();
   QString error;
-  if (contextRevision_ != capture.contextRevision || project_ != capture.project ||
-      project_->directory() != capture.projectDirectory ||
-      project_->takeDirectory(capture.take.sceneIndex, capture.take.shotIndex,
-                              capture.take.takeIndex, &error) !=
-          capture.takeDirectory) {
-    showError("The active take changed before capture completed. The image "
-              "remains at " + filePath);
+  if (!captureCoordinator_->recovery().retry(
+          QFileInfo(filePath).absolutePath(), &error)) {
+    showError(error + " The capture remains at " + filePath +
+              ". Use File > Recover Captures to retry or save it elsewhere.");
     updateControls();
     return;
   }
-  const auto frame = project_->importFrame(
-      capture.take.sceneIndex, capture.take.shotIndex, capture.take.takeIndex,
-      filePath, QDateTime::currentDateTimeUtc(), &error);
-  if (!frame.has_value()) {
-    showError(error + " The image remains at " + filePath);
-    updateControls();
-    return;
+  if (contextRevision_ == capture.contextRevision) {
+    statusLabel_->setText("Captured frame");
+    statusLabel_->setVisible(true);
+    refreshFrames();
+    showLiveView();
   }
-  QFile::remove(filePath);
-  statusLabel_->setText("Captured frame " + frameLabel(frame->number));
-  statusLabel_->setVisible(true);
-  refreshFrames(frame->number);
-  showLiveView();
   updateControls();
+}
+
+
+void AnimationWidget::refreshCapturedImages() {
+  const int row = frameStrip_->currentRow();
+  const int selectedNumber = row >= 0 && row < static_cast<int>(frames_.size())
+                                 ? frames_[row].number : -1;
+  stopPlayback(false);
+  refreshFrames(selectedNumber);
 }
 
 

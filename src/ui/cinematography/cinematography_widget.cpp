@@ -6,7 +6,6 @@
 #include <QComboBox>
 #include <QDateTime>
 #include <QDoubleSpinBox>
-#include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QFrame>
@@ -621,17 +620,23 @@ void CinematographyWidget::capture() {
   cameraRefreshButton_->setEnabled(false);
   setOperationStatus("Capturing...");
   QString error;
-  const QString shotDirectory = project_->shotDirectory(sceneIndex_, shotIndex_, &error);
-  if (shotDirectory.isEmpty()) {
+  const auto destination = project_->captureDestination(sceneIndex_, shotIndex_, -1, &error);
+  if (!destination.has_value()) {
     showError(error);
     return;
   }
-  pendingCapture_ = PendingCapture{
-      0, contextRevision_, project_, project_->directory(), shotDirectory,
-      sceneIndex_, shotIndex_, camera_->displayName(), currentCameraSettings(),
-      currentDisplaySettings()};
+  TestShot metadata;
+  metadata.capturedUtc = QDateTime::currentDateTimeUtc();
+  metadata.cameraDisplayName = camera_->displayName();
+  metadata.cameraBackend = camera_->backend();
+  metadata.cameraDeviceId = camera_->deviceId();
+  for (const CameraSetting& setting : camera_->settings()) {
+    metadata.capturedSettings.insert_or_assign(setting.id, setting.value);
+    metadata.displaySettings.insert_or_assign(setting.label, choiceLabel(setting, setting.value));
+  }
+  pendingCapture_ = PendingCapture{0, contextRevision_};
   const quint64 requestId =
-      captureCoordinator_->requestCapture(CapturePurpose::TestShot, &error);
+      captureCoordinator_->requestCapture(CapturePurpose::TestShot, *destination, metadata, &error);
   if (requestId == 0) {
     pendingCapture_.reset();
     showError(error);
@@ -644,34 +649,32 @@ void CinematographyWidget::importCapture(const QString& filePath) {
   if (!pendingCapture_.has_value()) {
     return;
   }
-  const PendingCapture capture = std::move(*pendingCapture_);
+  const PendingCapture capture = *pendingCapture_;
   pendingCapture_.reset();
-  captureButton_->setEnabled(project_ != nullptr && camera_ != nullptr);
+  captureButton_->setEnabled(project_ != nullptr && sceneIndex_ >= 0 && shotIndex_ >= 0 &&
+                              captureCoordinator_->isReady() &&
+                              !captureCoordinator_->isCapturing());
   cameraCombo_->setEnabled(true);
   cameraRefreshButton_->setEnabled(true);
   QString error;
-  if (contextRevision_ != capture.contextRevision || project_ != capture.project ||
-      project_->directory() != capture.projectDirectory ||
-      project_->shotDirectory(capture.sceneIndex, capture.shotIndex, &error) !=
-          capture.shotDirectory) {
-    showError(
-        "The originating shot changed before capture completed. The "
-        "image remains at " +
-        filePath);
+  if (!captureCoordinator_->recovery().retry(
+          QFileInfo(filePath).absolutePath(), &error)) {
+    showError(error + " The capture remains at " + filePath +
+              ". Use File > Recover Captures to retry or save it elsewhere.");
     return;
   }
-  const auto imported = capture.project->importTestShot(
-      capture.sceneIndex, capture.shotIndex, filePath, QDateTime::currentDateTimeUtc(),
-      capture.cameraDisplayName, capture.cameraSettings, capture.cameraSettings.settings,
-      capture.displaySettings, &error);
-  if (!imported.has_value()) {
-    showError(error + " The image remains at " + filePath);
-    return;
+  if (contextRevision_ == capture.contextRevision) {
+    clearError();
+    setOperationStatus("Captured test image");
+    refreshGallery();
+    if (!testShots_.empty()) {
+      gallery_->setCurrentRow(static_cast<int>(testShots_.size()) - 1);
+    }
   }
-  QFile::remove(filePath);
-  clearError();
-  setOperationStatus("Captured " + imported->fileName);
-  refreshGallery(imported->fileName);
+}
+
+void CinematographyWidget::refreshCapturedImages() {
+  refreshGallery();
 }
 
 void CinematographyWidget::refreshGallery(const QString& selectedFileName) {
@@ -815,17 +818,6 @@ ShotCameraSettings CinematographyWidget::currentCameraSettings() const {
   result.deviceId = camera_->deviceId();
   for (const CameraSetting& setting : settings_) {
     result.settings.insert_or_assign(setting.id, setting.value);
-  }
-  return result;
-}
-
-std::map<QString, QString> CinematographyWidget::currentDisplaySettings() const {
-  std::map<QString, QString> result;
-  if (camera_ == nullptr) {
-    return result;
-  }
-  for (const CameraSetting& setting : settings_) {
-    result.insert_or_assign(setting.label, choiceLabel(setting, setting.value));
   }
   return result;
 }

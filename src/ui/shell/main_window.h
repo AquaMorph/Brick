@@ -20,6 +20,7 @@ class MainWindow : public QMainWindow {
  private:
   void createProject();
   void openProject();
+  void recoverCaptures();
   void createScene();
   void renameScene();
   void deleteScene();

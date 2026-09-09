@@ -24,6 +24,49 @@ using project_storage::kShotConfigFileName;
 using project_storage::kTakeConfigFileName;
 using project_storage::setError;
 
+// Declared before QSettings so its final flush precedes checked rollback.
+struct ImportOutcome {
+  explicit ImportOutcome(bool* safe) : retrySafe(safe) {
+    if (retrySafe) {
+      *retrySafe = false;
+    }
+  }
+
+  ~ImportOutcome() {
+    if (committed) {
+      return;
+    }
+    bool clean = true;
+    for (const QString& path : outputs) {
+      const QFileInfo before(path);
+      if (before.exists() || before.isSymLink()) {
+        QFile::remove(path);
+      }
+      const QFileInfo after(path);
+      clean = !after.exists() && !after.isSymLink() && clean;
+    }
+    if (retrySafe) {
+      *retrySafe = clean;
+    }
+  }
+
+  bool prepare(const QString& path, QString* error) {
+    const QFileInfo file(path);
+    if (file.exists() || file.isSymLink()) {
+      setError(error, "The import output already exists; it was not modified.");
+      return false;
+    }
+    // Include failed writes: copy/save can leave a partial output behind.
+    outputs.push_back(path);
+    return true;
+  }
+
+  bool* retrySafe;
+  bool committed = false;
+  std::vector<QString> outputs;
+};
+
+
 void writeStringMap(QSettings& config, const QString& group,
                     const std::map<QString, QString>& values) {
   config.remove(group);
@@ -223,7 +266,9 @@ std::optional<TestShot> Project::importTestShot(
     const QDateTime& capturedUtc, const QString& cameraDisplayName,
     const ShotCameraSettings& camera,
     const std::map<QString, QString>& capturedSettings,
-    const std::map<QString, QString>& displaySettings, QString* error) {
+    const std::map<QString, QString>& displaySettings, QString* error,
+    bool* retrySafe) {
+  ImportOutcome outcome(retrySafe);
   const QFileInfo source(capturedImagePath);
   if (!source.exists() || !source.isFile()) {
     setError(error, "The captured test shot image does not exist.");
@@ -256,12 +301,18 @@ std::optional<TestShot> Project::importTestShot(
   const QString group = QString("%1").arg(number, 6, 10, QLatin1Char('0'));
   const QString fileName = group + '.' + suffix.toLower();
   const QString destination = QDir(directory).filePath(fileName);
+  if (!outcome.prepare(destination, error)) {
+    return std::nullopt;
+  }
   if (!QFile::copy(capturedImagePath, destination)) {
     setError(error, "Brick could not import the test shot image.");
     return std::nullopt;
   }
   const QString metadataPath =
       QDir(directory).filePath(testShotMetadataFileName(number));
+  if (!outcome.prepare(metadataPath, error)) {
+    return std::nullopt;
+  }
   QSettings metadata(metadataPath, QSettings::IniFormat);
   metadata.setValue("TestShot/formatVersion", kTestShotFormatVersion);
   metadata.setValue("TestShot/fileName", fileName);
@@ -274,11 +325,10 @@ std::optional<TestShot> Project::importTestShot(
   writeStringMap(metadata, "DisplaySettings", displaySettings);
   metadata.sync();
   if (metadata.status() != QSettings::NoError) {
-    QFile::remove(destination);
-    QFile::remove(metadataPath);
     setError(error, "Brick could not save test shot metadata.");
     return std::nullopt;
   }
+  outcome.committed = true;
   return TestShot{destination, fileName, capturedUtc.toUTC(), cameraDisplayName,
                   camera.backend, camera.deviceId, capturedSettings,
                   displaySettings};
@@ -329,7 +379,8 @@ bool Project::deleteTestShot(int sceneIndex, int shotIndex,
 std::optional<AnimationFrame> Project::importFrame(
     int sceneIndex, int shotIndex, int takeIndex,
     const QString& capturedImagePath, const QDateTime& capturedUtc,
-    QString* error) {
+    QString* error, bool* retrySafe) {
+  ImportOutcome outcome(retrySafe);
   const QFileInfo source(capturedImagePath);
   if (!source.exists() || !source.isFile()) {
     setError(error, "The captured frame image does not exist.");
@@ -366,14 +417,19 @@ std::optional<AnimationFrame> Project::importFrame(
       "frames/preview/high_res/" + baseName + ".jpg");
   const QString lowResPath = QDir(takePath).filePath(
       "frames/preview/low_res/" + baseName + ".jpg");
+  if (!outcome.prepare(highResPath, error)) {
+    return std::nullopt;
+  }
   if (!image.save(highResPath, "JPG", 95)) {
     setError(error, "Brick could not save the high-resolution frame preview.");
     return std::nullopt;
   }
   const QImage lowRes = image.scaled(640, 360, Qt::KeepAspectRatio,
-                                     Qt::SmoothTransformation);
+                                      Qt::SmoothTransformation);
+  if (!outcome.prepare(lowResPath, error)) {
+    return std::nullopt;
+  }
   if (!lowRes.save(lowResPath, "JPG", 82)) {
-    QFile::remove(highResPath);
     setError(error, "Brick could not save the low-resolution frame preview.");
     return std::nullopt;
   }
@@ -381,38 +437,35 @@ std::optional<AnimationFrame> Project::importFrame(
   if (isRawImageSuffix(source.suffix())) {
     rawPath = QDir(takePath).filePath("frames/RAW/" + baseName + '.' +
                                       source.suffix().toLower());
+    if (!outcome.prepare(rawPath, error)) {
+      return std::nullopt;
+    }
     if (!QFile::copy(capturedImagePath, rawPath)) {
-      QFile::remove(highResPath);
-      QFile::remove(lowResPath);
       setError(error, "Brick could not save the RAW frame.");
       return std::nullopt;
     }
   }
   const QString metadataPath =
       QDir(takePath).filePath("frames/" + baseName + ".conf");
+  if (!outcome.prepare(metadataPath, error)) {
+    return std::nullopt;
+  }
   QSettings metadata(metadataPath, QSettings::IniFormat);
   metadata.setValue("Frame/formatVersion", kAnimationFrameFormatVersion);
   metadata.setValue("Frame/capturedUtc",
                     capturedUtc.toUTC().toString(Qt::ISODateWithMs));
   metadata.sync();
   if (metadata.status() != QSettings::NoError) {
-    QFile::remove(highResPath);
-    QFile::remove(lowResPath);
-    QFile::remove(rawPath);
-    QFile::remove(metadataPath);
     setError(error, "Brick could not save frame metadata.");
     return std::nullopt;
   }
   takeConfig.setValue("Take/nextFrameNumber", number + 1);
   takeConfig.sync();
   if (takeConfig.status() != QSettings::NoError) {
-    QFile::remove(highResPath);
-    QFile::remove(lowResPath);
-    QFile::remove(rawPath);
-    QFile::remove(metadataPath);
     setError(error, "Brick could not update the next frame number.");
     return std::nullopt;
   }
+  outcome.committed = true;
   return AnimationFrame{number, highResPath, lowResPath, rawPath,
                         capturedUtc.toUTC()};
 }

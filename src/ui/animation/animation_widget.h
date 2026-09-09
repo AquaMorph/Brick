@@ -25,15 +25,12 @@ class AnimationWidget : public QWidget {
 
   void setActiveTake(Project* project,
                      const std::optional<Project::ActiveTake>& activeTake);
+  void refreshCapturedImages();
 
  private:
   struct PendingCapture {
     quint64 requestId;
     quint64 contextRevision;
-    Project* project;
-    QString projectDirectory;
-    QString takeDirectory;
-    Project::ActiveTake take;
   };
 
   void capture();

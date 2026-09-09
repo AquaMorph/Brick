@@ -6,6 +6,8 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFont>
 #include <QFrame>
@@ -25,6 +27,7 @@
 #include <QSettings>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -74,6 +77,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   openProjectAction->setShortcut(QKeySequence::Open);
   connect(openProjectAction, &QAction::triggered, this,
           [this] { openProject(); });
+
+  auto* recoveryAction = fileMenu->addAction("&Recover Captures...");
+  connect(recoveryAction, &QAction::triggered, this,
+          [this] { recoverCaptures(); });
 
   fileMenu->addSeparator();
   auto* exitAction = fileMenu->addAction("E&xit");
@@ -269,6 +276,110 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
       QMessageBox::warning(this, "Could Not Reopen Project", error);
     }
   }
+  QTimer::singleShot(0, this, [this] {
+    if (!captureCoordinator_->recovery().captures().empty()) {
+      recoverCaptures();
+    }
+  });
+}
+
+
+void MainWindow::recoverCaptures() {
+  auto& recovery = captureCoordinator_->recovery();
+  QDialog dialog(this);
+  dialog.setWindowTitle("Recover Captures");
+  dialog.resize(720, 420);
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* explanation = new QLabel(
+      "Captures are retained until imported or explicitly discarded. Retry imports "
+      "into the original shot or take, not the current selection. Save Elsewhere "
+      "copies all captured assets to a folder and keeps the recovery originals.", &dialog);
+  explanation->setWordWrap(true);
+  layout->addWidget(explanation);
+  auto* location = new QLabel("Recovery storage: " + recovery.directory(), &dialog);
+  location->setWordWrap(true);
+  location->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  layout->addWidget(location);
+  auto* list = new QListWidget(&dialog);
+  list->setAccessibleName("Recoverable captures");
+  layout->addWidget(list);
+  auto* actions = new QHBoxLayout;
+  auto* retry = new QPushButton("Retry Import", &dialog);
+  auto* save = new QPushButton("Save Elsewhere...", &dialog);
+  auto* discard = new QPushButton("Discard...", &dialog);
+  actions->addWidget(retry);
+  actions->addWidget(save);
+  actions->addWidget(discard);
+  layout->addLayout(actions);
+  auto* close = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+  connect(close, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  layout->addWidget(close);
+
+  std::vector<RecoveryCapture> captures;
+  auto updateActions = [&] {
+    const int row = list->currentRow();
+    const bool selected = row >= 0 && row < static_cast<int>(captures.size());
+    retry->setEnabled(selected && captures[row].ready);
+    save->setEnabled(selected && !captures[row].filePath.isEmpty());
+    discard->setEnabled(selected);
+  };
+  auto refresh = [&] {
+    list->clear();
+    captures = recovery.captures();
+    for (const auto& capture : captures) {
+      auto* item = new QListWidgetItem(
+          capture.description + '\n' + capture.directory, list);
+      item->setToolTip(capture.filePath);
+    }
+    if (!captures.empty()) {
+      list->setCurrentRow(0);
+    }
+    updateActions();
+  };
+  connect(list, &QListWidget::currentRowChanged, &dialog, updateActions);
+  connect(retry, &QPushButton::clicked, &dialog, [&] {
+    const QString job = captures[list->currentRow()].directory;
+    QString error;
+    if (!recovery.retry(job, &error)) {
+      QMessageBox::warning(&dialog, "Could Not Import Capture", error);
+    } else {
+      animationWidget_->refreshCapturedImages();
+      cinematographyWidget_->refreshCapturedImages();
+    }
+    refresh();
+  });
+  connect(save, &QPushButton::clicked, &dialog, [&] {
+    const QString job = captures[list->currentRow()].directory;
+    const QString destination = QFileDialog::getExistingDirectory(
+        &dialog, "Choose Folder for Recovered Assets");
+    if (destination.isEmpty()) {
+      return;
+    }
+    QString error;
+    if (!recovery.saveElsewhere(job, destination, &error)) {
+      QMessageBox::warning(&dialog, "Could Not Save Capture", error);
+    } else {
+      QMessageBox::information(&dialog, "Capture Saved",
+          "Assets copied. Recovery originals are retained until you discard them.");
+    }
+    refresh();
+  });
+  connect(discard, &QPushButton::clicked, &dialog, [&] {
+    const QString job = captures[list->currentRow()].directory;
+    if (QMessageBox::question(&dialog, "Discard Capture",
+            "Permanently delete this capture's recovery files? This cannot be undone.",
+            QMessageBox::Discard | QMessageBox::Cancel,
+            QMessageBox::Cancel) != QMessageBox::Discard) {
+      return;
+    }
+    QString error;
+    if (!recovery.discard(job, &error)) {
+      QMessageBox::warning(&dialog, "Could Not Discard Capture", error);
+    }
+    refresh();
+  });
+  refresh();
+  dialog.exec();
 }
 
 

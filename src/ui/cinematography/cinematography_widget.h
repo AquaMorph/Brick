@@ -25,19 +25,12 @@ class CinematographyWidget : public QWidget {
                                 QWidget* parent = nullptr);
 
   void setShot(Project* project, int sceneIndex, int shotIndex);
+  void refreshCapturedImages();
 
  private:
   struct PendingCapture {
     quint64 requestId;
     quint64 contextRevision;
-    Project* project;
-    QString projectDirectory;
-    QString shotDirectory;
-    int sceneIndex;
-    int shotIndex;
-    QString cameraDisplayName;
-    ShotCameraSettings cameraSettings;
-    std::map<QString, QString> displaySettings;
   };
 
   void refreshCameras();
@@ -56,7 +49,6 @@ class CinematographyWidget : public QWidget {
   void deleteSelectedTestShot();
   void restoreSelectedTestShotSettings();
   [[nodiscard]] ShotCameraSettings currentCameraSettings() const;
-  [[nodiscard]] std::map<QString, QString> currentDisplaySettings() const;
   void setConnectionStatus(const QString& text, bool connected);
   void setOperationStatus(const QString& text);
   void clearError();

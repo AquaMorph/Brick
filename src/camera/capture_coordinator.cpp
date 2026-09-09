@@ -2,12 +2,24 @@
 
 #include "camera_registry.h"
 
+#include <QFileInfo>
 #include <QMetaObject>
-#include <QUuid>
 
 #include <utility>
 
 CaptureCoordinator::CaptureCoordinator(QObject* parent) : QObject(parent) {}
+
+
+CaptureCoordinator::~CaptureCoordinator() {
+  if (camera_) {
+    camera_->disconnect(this);
+    camera_->stop();
+    camera_.reset();
+  }
+}
+
+
+CaptureRecovery& CaptureCoordinator::recovery() { return recovery_; }
 
 
 std::vector<CameraDevice> CaptureCoordinator::availableDevices() const {
@@ -26,6 +38,7 @@ bool CaptureCoordinator::selectCamera(
 
   if (camera_) {
     emit cameraChanged(nullptr);
+    camera_->disconnect(this);
     camera_->stop();
     camera_.reset();
   }
@@ -47,23 +60,28 @@ bool CaptureCoordinator::selectCamera(
   connect(camera_.get(), &CameraSession::settingsChanged, this,
           &CaptureCoordinator::settingsChanged);
   connect(camera_.get(), &CameraSession::errorOccurred, this,
-          [this](const QString& message) {
+          [this, generation = cameraGeneration_](const QString& message) {
+            if (generation != cameraGeneration_ || !camera_) {
+              return;
+            }
             if (activeCapture_.has_value()) {
               failCapture(activeCapture_->id, message);
             } else {
               emit cameraError(message);
             }
-          });
+          }, Qt::QueuedConnection);
   connect(camera_.get(), &CameraSession::captureCompleted, this,
           [this](quint64 captureId, const QString& filePath) {
             completeCapture(captureId, filePath);
-          });
+          }, Qt::QueuedConnection);
   connect(camera_.get(), &CameraSession::captureFailed, this,
           [this](quint64 captureId, const QString& message) {
             failCapture(captureId, message);
-          });
+          }, Qt::QueuedConnection);
   camera_->start();
   if (!camera_->isReady()) {
+    camera_->disconnect(this);
+    camera_->stop();
     camera_.reset();
     if (error != nullptr) {
       *error = "Brick could not initialize the selected camera.";
@@ -91,6 +109,8 @@ bool CaptureCoordinator::isCapturing() const {
 
 
 quint64 CaptureCoordinator::requestCapture(CapturePurpose purpose,
+                                            const CaptureDestination& destination,
+                                            const TestShot& metadata,
                                             QString* error) {
   if (activeCapture_.has_value()) {
     if (error != nullptr) {
@@ -104,19 +124,14 @@ quint64 CaptureCoordinator::requestCapture(CapturePurpose purpose,
     }
     return 0;
   }
-  if (!captureDirectory_.isValid()) {
-    if (error != nullptr) {
-      *error = "Brick could not create temporary capture storage.";
-    }
+  const QString base = recovery_.begin(purpose, destination, metadata, error);
+  if (base.isEmpty()) {
     return 0;
   }
 
   const quint64 captureId = nextCaptureId_++;
-  const QString fileName = QString("capture-%1-%2")
-                               .arg(captureId)
-                               .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
   activeCapture_ = ActiveCapture{captureId, cameraGeneration_, purpose,
-                                 captureDirectory_.filePath(fileName)};
+                                 base};
   emit captureStateChanged(true);
 
   const quint64 generation = cameraGeneration_;
@@ -141,6 +156,13 @@ void CaptureCoordinator::completeCapture(quint64 captureId,
     return;
   }
   const CapturePurpose purpose = activeCapture_->purpose;
+  const QString job = QFileInfo(activeCapture_->destinationBase).absolutePath();
+  QString error;
+  if (!recovery_.markReady(job, filePath, &error)) {
+    failCapture(captureId, error);
+    return;
+  }
+  recovery_.release(job);
   activeCapture_.reset();
   emit captureStateChanged(false);
   emit captureCompleted(captureId, purpose, filePath);
@@ -153,7 +175,19 @@ void CaptureCoordinator::failCapture(quint64 captureId,
     return;
   }
   const CapturePurpose purpose = activeCapture_->purpose;
+  const QString job = QFileInfo(activeCapture_->destinationBase).absolutePath();
+  // Generic camera errors may arrive while the backend is still writing.
+  if (camera_) {
+    camera_->disconnect(this);
+    camera_->stop();
+    emit cameraChanged(nullptr);
+    camera_.reset();
+    ++cameraGeneration_;
+  }
+  recovery_.release(job);
   activeCapture_.reset();
   emit captureStateChanged(false);
-  emit captureFailed(captureId, purpose, message);
+  emit captureFailed(captureId, purpose,
+                     message + " Any downloaded assets are retained at " + job +
+                         ". Use File > Recover Captures to save or discard them.");
 }

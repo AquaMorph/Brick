@@ -5,12 +5,16 @@
 #include <utility>
 
 
-Project::Project(QString name, QString directory, std::vector<QString> scenes,
+Project::Project(QString name, QString directory, QString id,
+                 std::vector<QString> scenes,
                  std::vector<std::vector<QString>> shots,
                  std::vector<std::vector<int>> takeCounts,
-                 std::optional<ActiveTake> activeTake)
+                 std::optional<ActiveTake> activeTake,
+                 std::vector<std::vector<ShotIdentity>> identities)
     : name_(std::move(name)),
       directory_(std::move(directory)),
+      id_(std::move(id)),
+      identities_(std::move(identities)),
       scenes_(std::move(scenes)),
       shots_(std::move(shots)),
       takeCounts_(std::move(takeCounts)),

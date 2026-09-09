@@ -1,21 +1,21 @@
 #pragma once
 
 #include "camera.h"
+#include "storage/capture_recovery.h"
 
 #include <QObject>
-#include <QTemporaryDir>
 
 #include <memory>
 #include <optional>
 #include <vector>
-
-enum class CapturePurpose { TestShot, AnimationFrame };
 
 class CaptureCoordinator : public QObject {
   Q_OBJECT
 
  public:
   explicit CaptureCoordinator(QObject* parent = nullptr);
+  ~CaptureCoordinator() override;
+  CaptureRecovery& recovery();
 
   [[nodiscard]] std::vector<CameraDevice> availableDevices() const;
   bool selectCamera(const std::optional<CameraDevice>& device,
@@ -24,6 +24,8 @@ class CaptureCoordinator : public QObject {
   [[nodiscard]] bool isReady() const;
   [[nodiscard]] bool isCapturing() const;
   [[nodiscard]] quint64 requestCapture(CapturePurpose purpose,
+                                       const CaptureDestination& destination,
+                                       const TestShot& metadata = {},
                                        QString* error = nullptr);
 
  signals:
@@ -49,7 +51,7 @@ class CaptureCoordinator : public QObject {
   void failCapture(quint64 captureId, const QString& message);
 
   std::unique_ptr<CameraSession> camera_;
-  QTemporaryDir captureDirectory_;
+  CaptureRecovery recovery_;
   std::optional<ActiveCapture> activeCapture_;
   quint64 nextCaptureId_ = 1;
   quint64 cameraGeneration_ = 0;
