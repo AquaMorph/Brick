@@ -1,5 +1,6 @@
 #include "ui/cinematography/cinematography_widget.h"
 
+#include "camera/camera_registry.h"
 #include "ui/shared/layout_constants.h"
 
 #include <QCheckBox>
@@ -285,6 +286,11 @@ CinematographyWidget::CinematographyWidget(
             showError(message);
           });
 
+  connect(cameraDiscovery(), &CameraDiscovery::camerasChanged, this, [this] {
+    if (!camera_) {
+      refreshCameras();
+    }
+  });
   refreshCameras();
 }
 

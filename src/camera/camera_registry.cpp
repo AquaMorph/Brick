@@ -1,10 +1,18 @@
 #include "camera_registry.h"
 
+#include <QCoreApplication>
+
 #include "webcam/webcam_camera.h"
 
 #ifdef BRICK_HAS_CANON_EDSDK
 #include "canon/canon_camera.h"
 #endif
+
+CameraDiscovery* cameraDiscovery() {
+  static auto* discovery = new CameraDiscovery(QCoreApplication::instance());
+  return discovery;
+}
+
 
 std::vector<CameraDevice> availableCameras() {
   std::vector<CameraDevice> devices;

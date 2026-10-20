@@ -1,8 +1,10 @@
 #include "canon_camera.h"
+#include "camera/camera_registry.h"
 
 #include <EDSDK.h>
 
 #include <QByteArray>
+#include <QDebug>
 #include <QFile>
 #include <QFileInfo>
 #include <QTimer>
@@ -18,6 +20,53 @@ namespace {
 QString errorText(EdsError error) {
   return QString("Canon EDSDK error 0x%1").arg(error, 8, 16, QLatin1Char('0'));
 }
+
+// Discovery is asynchronous on macOS. Keep the SDK alive between enumeration
+// and opening sessions, and let the application's event loop deliver arrivals.
+class CanonRuntime final : public QObject {
+ public:
+  explicit CanonRuntime(QObject* parent) : QObject(parent) {
+    error_ = EdsInitializeSDK();
+    if (error_ != EDS_ERR_OK) {
+      qWarning().noquote() << "Could not initialize Canon SDK:" << errorText(error_);
+      return;
+    }
+    const EdsError handlerError = EdsSetCameraAddedHandler(cameraAdded, nullptr);
+    if (handlerError != EDS_ERR_OK) {
+      qWarning().noquote() << "Could not monitor Canon cameras:" << errorText(handlerError);
+    }
+    connect(&eventTimer_, &QTimer::timeout, this, [] { EdsGetEvent(); });
+    eventTimer_.start(33);
+  }
+
+  ~CanonRuntime() override {
+    eventTimer_.stop();
+    if (error_ == EDS_ERR_OK) {
+      EdsSetCameraAddedHandler(nullptr, nullptr);
+      EdsTerminateSDK();
+    }
+  }
+
+  [[nodiscard]] EdsError error() const { return error_; }
+
+ private:
+  static EdsError EDSCALLBACK cameraAdded(EdsVoid*) {
+    // Never enumerate or open a session from inside an SDK callback.
+    QMetaObject::invokeMethod(cameraDiscovery(), &CameraDiscovery::camerasChanged,
+                              Qt::QueuedConnection);
+    return EDS_ERR_OK;
+  }
+
+  EdsError error_ = EDS_ERR_OK;
+  QTimer eventTimer_;
+};
+
+
+CanonRuntime& canonRuntime() {
+  static auto* runtime = new CanonRuntime(cameraDiscovery());
+  return *runtime;
+}
+
 
 QString hexValue(EdsInt32 value) { return QString::number(static_cast<EdsUInt32>(value), 16); }
 
@@ -402,9 +451,6 @@ class CanonSession final : public CameraSession {
       }
       EdsRelease(camera_);
     }
-    if (sdkInitialized_) {
-      EdsTerminateSDK();
-    }
   }
 
   [[nodiscard]] QString backend() const override { return device_.backend; }
@@ -769,12 +815,11 @@ class CanonSession final : public CameraSession {
   }
 
   void initialize() {
-    EdsError error = EdsInitializeSDK();
+    EdsError error = canonRuntime().error();
     if (error != EDS_ERR_OK) {
       initializationError_ = "Could not initialize Canon EDSDK: " + errorText(error);
       return;
     }
-    sdkInitialized_ = true;
 
     EdsCameraListRef list = nullptr;
     EdsUInt32 count = 0;
@@ -826,7 +871,6 @@ class CanonSession final : public CameraSession {
   }
 
   void poll() {
-    EdsGetEvent();
     if (!liveViewStarted_) {
       return;
     }
@@ -927,7 +971,6 @@ class CanonSession final : public CameraSession {
   QString pendingCaptureBase_;
   QString pendingCaptureWarning_;
   quint64 pendingCaptureId_ = 0;
-  bool sdkInitialized_ = false;
   bool sessionOpen_ = false;
   bool liveViewStarted_ = false;
   mutable bool depthOfFieldPreview_ = false;
@@ -942,7 +985,7 @@ class CanonSession final : public CameraSession {
 
 std::vector<CameraDevice> availableCanonCameras() {
   std::vector<CameraDevice> devices;
-  if (EdsInitializeSDK() != EDS_ERR_OK) {
+  if (canonRuntime().error() != EDS_ERR_OK) {
     return devices;
   }
   EdsCameraListRef list = nullptr;
@@ -965,7 +1008,6 @@ std::vector<CameraDevice> availableCanonCameras() {
   if (list != nullptr) {
     EdsRelease(list);
   }
-  EdsTerminateSDK();
   return devices;
 }
 
