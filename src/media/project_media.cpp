@@ -1,5 +1,6 @@
 #include "core/project.h"
 
+#include "media/capture_image.h"
 #include "settings/frame_rate.h"
 #include "storage/project_storage_internal.h"
 
@@ -390,9 +391,8 @@ std::optional<AnimationFrame> Project::importFrame(
     setError(error, "The frame capture time is invalid.");
     return std::nullopt;
   }
-  const QImage image(capturedImagePath);
+  const QImage image = loadCaptureImage(capturedImagePath, {}, error);
   if (image.isNull()) {
-    setError(error, "Brick could not decode the captured frame image.");
     return std::nullopt;
   }
   const QString takePath = takeDirectory(sceneIndex, shotIndex, takeIndex, error);

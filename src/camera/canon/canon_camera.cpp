@@ -630,18 +630,15 @@ class CanonSession final : public CameraSession {
       restoreDepthOfFieldPreviewAfterCapture_ = true;
       emit settingsChanged();
     }
-    EdsError error = EDS_ERR_OK;
-    if (restoreDepthOfFieldPreviewAfterCapture_) {
-      error = EdsSendCommand(camera_, kEdsCameraCommand_PressShutterButton,
-                             kEdsCameraCommand_ShutterButton_Completely_NonAF);
-      const EdsError releaseError = EdsSendCommand(
-          camera_, kEdsCameraCommand_PressShutterButton, kEdsCameraCommand_ShutterButton_OFF);
-      if (error == EDS_ERR_OK && releaseError != EDS_ERR_OK) {
-        pendingCaptureWarning_ =
-            "Canon could not release the shutter button: " + errorText(releaseError);
-      }
-    } else {
-      error = EdsSendCommand(camera_, kEdsCameraCommand_TakePicture, 0);
+    // Preserve the animator's focus and avoid autofocus preventing a capture.
+    const EdsError error = EdsSendCommand(
+        camera_, kEdsCameraCommand_PressShutterButton,
+        kEdsCameraCommand_ShutterButton_Completely_NonAF);
+    const EdsError releaseError = EdsSendCommand(
+        camera_, kEdsCameraCommand_PressShutterButton, kEdsCameraCommand_ShutterButton_OFF);
+    if (error == EDS_ERR_OK && releaseError != EDS_ERR_OK) {
+      pendingCaptureWarning_ =
+          "Canon could not release the shutter button: " + errorText(releaseError);
     }
     if (error != EDS_ERR_OK) {
       pendingCaptureId_ = 0;
@@ -797,9 +794,29 @@ class CanonSession final : public CameraSession {
     return EDS_ERR_OK;
   }
 
-  static EdsError EDSCALLBACK stateEvent(EdsStateEvent event, EdsUInt32, EdsVoid* context) {
+  static EdsError EDSCALLBACK stateEvent(EdsStateEvent event, EdsUInt32 parameter,
+                                        EdsVoid* context) {
+    auto* self = static_cast<CanonSession*>(context);
+    if (event == kEdsStateEvent_CaptureError) {
+      const quint64 captureId = self->pendingCaptureId_;
+      // Restore camera properties outside the SDK callback. Ignore stale events
+      // if the transfer has already completed by the time this is delivered.
+      QMetaObject::invokeMethod(self, [self, captureId, parameter] {
+        if (captureId == 0 || self->pendingCaptureId_ != captureId) {
+          return;
+        }
+        self->pendingCaptureId_ = 0;
+        self->pendingCaptureBase_.clear();
+        self->pendingCaptureWarning_.clear();
+        QString message = "Canon capture failed: " + errorText(parameter);
+        const EdsError previewError = self->restoreDepthOfFieldPreview();
+        if (previewError != EDS_ERR_OK) {
+          message += ". Could not restore depth of field preview: " + errorText(previewError);
+        }
+        emit self->captureFailed(captureId, message);
+      }, Qt::QueuedConnection);
+    }
     if (event == kEdsStateEvent_Shutdown) {
-      auto* self = static_cast<CanonSession*>(context);
       if (self->pendingCaptureId_ != 0) {
         const quint64 captureId = self->pendingCaptureId_;
         self->pendingCaptureId_ = 0;

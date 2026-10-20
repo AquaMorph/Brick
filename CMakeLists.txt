@@ -23,6 +23,14 @@ option(BRICK_ENABLE_CANON_EDSDK
        "Build Canon DSLR support using a locally supplied Canon EDSDK" OFF)
 set(BRICK_EDSDK_ROOT "${CMAKE_SOURCE_DIR}/third_party/canon/EDSDK" CACHE PATH
     "Path to the extracted Canon EDSDK directory")
+option(BRICK_ENABLE_CANON_RAW "Develop Canon RAW captures using Canon's RAW SDK" OFF)
+if(APPLE)
+  set(BRICK_CANON_RAW_DEFAULT "${CMAKE_SOURCE_DIR}/third_party/canon/raw-macintosh/EDSDK")
+else()
+  set(BRICK_CANON_RAW_DEFAULT "${CMAKE_SOURCE_DIR}/third_party/canon/raw-windows/EDSDK")
+endif()
+set(BRICK_CANON_RAW_ROOT "${BRICK_CANON_RAW_DEFAULT}" CACHE PATH
+    "Path to EDSDK from Canon's RAW-processing package")
 
 qt_standard_project_setup()
 
@@ -31,6 +39,8 @@ qt_add_library(brick_core STATIC
   src/core/project.h
   src/media/playback_timing.h
   src/media/project_media.cpp
+  src/media/capture_image.cpp
+  src/media/capture_image.h
   src/settings/frame_rate.h
   src/storage/project_storage.cpp
   src/storage/project_storage_internal.h
@@ -83,6 +93,10 @@ qt_add_executable(brick
 )
 
 target_link_libraries(brick PRIVATE brick_ui Qt6::Widgets)
+
+if(BRICK_ENABLE_CANON_RAW)
+  include(cmake/CanonRaw.cmake)
+endif()
 
 if(BRICK_ENABLE_CANON_EDSDK)
   if(WIN32)
@@ -165,4 +179,12 @@ if(BUILD_TESTING)
   add_executable(capture_recovery_tests tests/capture_recovery_test.cpp)
   target_link_libraries(capture_recovery_tests PRIVATE brick_core Qt6::Gui)
   add_test(NAME capture_recovery_tests COMMAND capture_recovery_tests)
+  add_executable(capture_image_tests tests/capture_image_test.cpp)
+  target_link_libraries(capture_image_tests PRIVATE brick_core Qt6::Gui)
+  add_test(NAME capture_image_tests COMMAND capture_image_tests)
+  set(BRICK_TEST_CANON_RAW_FILE "" CACHE FILEPATH "Optional real Canon RAW test fixture")
+  if(BRICK_ENABLE_CANON_RAW AND BRICK_TEST_CANON_RAW_FILE)
+    add_test(NAME canon_raw_import_tests
+      COMMAND capture_image_tests "${BRICK_TEST_CANON_RAW_FILE}")
+  endif()
 endif()

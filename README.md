@@ -60,6 +60,42 @@ permits distributing the EDSDK runtime and must include Canon's required
 notices. The EDSDK readme also requires executable documentation to state:
 "this software is based in part on the work of the Independent JPEG Group".
 
+### Canon RAW capture
+
+RAW-only CR3/CR2 captures require Canon's separate **EDSDK for RAW Develop**
+package. No third-party RAW decoder is used. Extract this licensed package
+separately from the camera-control SDK, then configure:
+
+```sh
+cmake -S . -B build -DBRICK_ENABLE_CANON_RAW=ON \
+  -DBRICK_CANON_RAW_ROOT=/path/to/raw-package/EDSDK
+cmake --build build --config Release --parallel
+```
+
+On macOS, `BRICK_CANON_RAW_ROOT` contains `Header` and `Framework`; extract
+these from the package's disk image. On Windows it contains `Header` and
+`Library`, with `EDSDK_64` alongside it. All decoder runtime files are copied
+into a private helper directory, not into system folders. The original SDKs
+remain unmodified and must not be committed to Git.
+
+Canon RAW Develop 13.20.10 is Intel-only on macOS. Brick remains native on Apple
+Silicon and runs the isolated decoder through Rosetta, which must already be
+available. If macOS rejects the extracted SDK's signature, the opt-in
+`-DBRICK_CANON_RAW_ADHOC_SIGN=ON` clears quarantine and applies development
+signatures **only to the build-local helper and SDK copy**. This does not change
+system security settings or the original SDK. Distribution requires appropriate
+signing and compliance with Canon's licensing terms.
+
+Brick develops full-resolution RGB previews using the RAW's recorded settings,
+while preserving the original RAW in `frames/RAW`. Cinematography test images
+keep their original RAW format and use the same decoder for display. Existing
+failed RAW imports can be retried using **File > Recover Captures**.
+
+To run the optional real-RAW regression test, set
+`-DBRICK_TEST_CANON_RAW_FILE=/path/to/sample.CR3`, build, then run
+`ctest --test-dir build -C Release --output-on-failure`. The test uses temporary
+project storage and verifies that RAW import preserves the source bytes.
+
 Run the application from the generated build directory. With a single-config
 generator it is `build/Brick` on Linux, `build/Brick.exe` on Windows, or
 `build/Brick.app` on macOS. Visual Studio places the Windows executable at

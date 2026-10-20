@@ -1,6 +1,7 @@
 #include "ui/cinematography/cinematography_widget.h"
 
 #include "camera/camera_registry.h"
+#include "media/capture_image.h"
 #include "ui/shared/layout_constants.h"
 
 #include <QCheckBox>
@@ -12,7 +13,6 @@
 #include <QFrame>
 #include <QFutureWatcher>
 #include <QHBoxLayout>
-#include <QImageReader>
 #include <QLabel>
 #include <QListWidget>
 #include <QMessageBox>
@@ -33,13 +33,7 @@
 namespace {
 
 QImage loadScaledImage(const QString& filePath, const QSize& targetSize) {
-  QImageReader reader(filePath);
-  const QSize sourceSize = reader.size();
-  if (sourceSize.isValid() && targetSize.isValid() &&
-      (sourceSize.width() > targetSize.width() || sourceSize.height() > targetSize.height())) {
-    reader.setScaledSize(sourceSize.scaled(targetSize, Qt::KeepAspectRatio));
-  }
-  return reader.read();
+  return loadCaptureImage(filePath, targetSize);
 }
 
 class DoubleClickResetSlider final : public QSlider {
