@@ -1,8 +1,11 @@
 //! Brick, a stop motion animation program.
 
 mod app;
+mod camera;
+mod cinematography;
 mod direct;
 mod file_menu;
+mod images;
 mod picker;
 mod project;
 mod project_dialog;

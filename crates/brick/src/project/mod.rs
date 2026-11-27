@@ -10,13 +10,18 @@ use std::fmt;
 use std::fs::{File, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
+
+use crate::camera::{CameraSettings, Capture};
 
 const PROJECT_CONF: &str = "project.conf";
 const SCENE_CONF: &str = "scene.conf";
 const SHOT_CONF: &str = "shot.conf";
 const TAKE_CONF: &str = "take.conf";
+/// Test shots of a shot (P15).
+const TESTS_DIR: &str = "tests";
 /// File locked while a project is open, so only one instance can open it (P10).
 const LOCK_FILE: &str = ".lock";
 /// Generated data that can be rebuilt at any time (P9).
@@ -130,6 +135,18 @@ impl TakeId {
     }
 }
 
+/// Identifies a shot for as long as the project is open, even when shots are
+/// reordered or renamed. Used for work that finishes later, such as a capture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ShotKey(u64);
+
+impl ShotKey {
+    fn new() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        ShotKey(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
 impl ShotId {
     pub fn take(self, take: u32) -> TakeId {
         TakeId {
@@ -173,11 +190,18 @@ struct ShotConf {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     chosen_take: Option<u32>,
     /// The number the next new take gets. Take numbers are never reused.
-    #[serde(default = "first_take")]
+    #[serde(default = "first_number")]
     next_take: u32,
+    /// The number the next test shot gets. Image numbers are never reused
+    /// (P5).
+    #[serde(default = "first_number")]
+    next_test: u32,
+    /// Camera settings applied whenever a take of this shot is active (CT7).
+    #[serde(default, skip_serializing_if = "CameraSettings::is_empty")]
+    camera: CameraSettings,
 }
 
-fn first_take() -> u32 {
+fn first_number() -> u32 {
     1
 }
 
@@ -220,11 +244,16 @@ impl Scene {
 }
 
 pub struct Shot {
+    key: ShotKey,
     dir: String,
     name: String,
     notes: String,
     chosen_take: Option<u32>,
     next_take: u32,
+    next_test: u32,
+    camera: CameraSettings,
+    /// Test shot image numbers in capture order (CT5).
+    tests: Vec<u32>,
     takes: Vec<Take>,
 }
 
@@ -250,12 +279,28 @@ impl Shot {
         self.chosen_take
     }
 
+    pub fn key(&self) -> ShotKey {
+        self.key
+    }
+
+    /// The camera settings saved for this shot (CT7).
+    pub fn camera(&self) -> &CameraSettings {
+        &self.camera
+    }
+
+    /// Test shot image numbers, oldest first (CT5).
+    pub fn tests(&self) -> &[u32] {
+        &self.tests
+    }
+
     fn conf(&self) -> ShotConf {
         ShotConf {
             name: self.name.clone(),
             notes: self.notes.clone(),
             chosen_take: self.chosen_take,
             next_take: self.next_take,
+            next_test: self.next_test,
+            camera: self.camera.clone(),
         }
     }
 }
@@ -402,7 +447,7 @@ impl Project {
         Some(
             self.take_path(id)
                 .join("frames/preview/low_res")
-                .join(format!("{image:06}.jpg")),
+                .join(image_name(image, "jpg")),
         )
     }
 
@@ -482,11 +527,15 @@ impl Project {
         let entry = self.scene_mut(scene)?;
         let index = entry.shots.len();
         let shot = Shot {
+            key: ShotKey::new(),
             dir: disk::level_dir_name(index + 1, &name),
             name,
             notes: String::new(),
             chosen_take: None,
             next_take: 1,
+            next_test: 1,
+            camera: CameraSettings::default(),
+            tests: Vec::new(),
             takes: Vec::new(),
         };
         let path = scene_path.join(&shot.dir);
@@ -514,6 +563,52 @@ impl Project {
             return Err(Error::Invalid("No such take.".into()));
         }
         self.update_shot(id, |shot| shot.chosen_take = take)
+    }
+
+    /// Finds the shot with `key`, wherever it has moved to.
+    pub fn find_shot(&self, key: ShotKey) -> Option<ShotId> {
+        self.scenes.iter().enumerate().find_map(|(scene, s)| {
+            let shot = s.shots.iter().position(|shot| shot.key == key)?;
+            Some(ShotId { scene, shot })
+        })
+    }
+
+    /// Saves the camera settings for a shot (CT7).
+    pub fn set_shot_camera(&mut self, id: ShotId, settings: &CameraSettings) -> Result<()> {
+        if self.shot(id).is_some_and(|shot| shot.camera == *settings) {
+            return Ok(());
+        }
+        self.update_shot(id, |shot| shot.camera = settings.clone())
+    }
+
+    /// Where a test shot's JPEG is stored (P15).
+    pub fn test_shot_path(&self, id: ShotId, number: u32) -> PathBuf {
+        self.root
+            .join(self.shot_relative(id))
+            .join(TESTS_DIR)
+            .join(image_name(number, "jpg"))
+    }
+
+    /// Writes a captured test shot to the shot's `tests/` folder and returns
+    /// its number (CT5, P15). The files are flushed to disk before the test
+    /// shot is listed (P7).
+    pub fn add_test_shot(&mut self, id: ShotId, capture: &Capture) -> Result<u32> {
+        let shot = self
+            .shot(id)
+            .ok_or_else(|| Error::Invalid("No such shot.".into()))?;
+        let number = shot.next_test;
+        // Reserve the number before any file exists so a crash can never hand
+        // it out twice (P5).
+        self.update_shot(id, |shot| shot.next_test = number + 1)?;
+        let dir = self.root.join(self.shot_relative(id)).join(TESTS_DIR);
+        disk::create_dir(&dir)?;
+        if let Some((extension, raw)) = &capture.raw {
+            disk::write_image(&dir.join(image_name(number, extension)), raw)?;
+        }
+        // The JPEG goes last: a test shot is listed once its JPEG exists.
+        disk::write_image(&dir.join(image_name(number, "jpg")), &capture.jpeg)?;
+        self.scenes[id.scene].shots[id.shot].tests.push(number);
+        Ok(number)
     }
 
     /// Moves a shot within its scene so it ends up at position `to`.
@@ -666,6 +761,8 @@ impl Project {
             shot.notes = old.notes;
             shot.chosen_take = old.chosen_take;
             shot.next_take = old.next_take;
+            shot.next_test = old.next_test;
+            shot.camera = old.camera;
             return Err(e);
         }
         Ok(())
@@ -744,14 +841,25 @@ fn load_shot(path: &Path, dir: String) -> Result<Shot> {
     let chosen_take = conf
         .chosen_take
         .filter(|n| takes.iter().any(|t| t.number == *n));
+    let tests = disk::image_numbers(&path.join(TESTS_DIR), "jpg")?;
+    let highest_test = tests.last().copied().unwrap_or(0);
     Ok(Shot {
+        key: ShotKey::new(),
         dir,
         name: conf.name,
         notes: conf.notes,
         chosen_take,
         next_take: conf.next_take.max(highest + 1),
+        next_test: conf.next_test.max(highest_test + 1),
+        camera: conf.camera,
+        tests,
         takes,
     })
+}
+
+/// The file name of a captured image: a six digit number (P5).
+fn image_name(number: u32, extension: &str) -> String {
+    format!("{number:06}.{extension}")
 }
 
 /// Takes the lock that keeps a second instance from opening the project

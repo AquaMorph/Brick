@@ -795,18 +795,18 @@ fn stat(ui: &mut egui::Ui, label: &str, value: &str) {
     });
 }
 
-fn section_title(text: &str) -> RichText {
+pub(crate) fn section_title(text: &str) -> RichText {
     RichText::new(text.to_uppercase())
         .size(11.0)
         .color(theme::TEXT_DIM)
         .strong()
 }
 
-fn dim(text: impl Into<String>) -> RichText {
+pub(crate) fn dim(text: impl Into<String>) -> RichText {
     RichText::new(text).color(theme::TEXT_DIM)
 }
 
-fn panel_frame() -> egui::Frame {
+pub(crate) fn panel_frame() -> egui::Frame {
     egui::Frame::new()
         .fill(theme::BACKGROUND)
         .inner_margin(egui::Margin::same(14))

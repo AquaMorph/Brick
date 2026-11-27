@@ -12,3 +12,8 @@ rust-version = "1.95"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+
+# Decoding and encoding camera images is far too slow for development without
+# optimizing dependencies.
+[profile.dev.package."*"]
+opt-level = 2

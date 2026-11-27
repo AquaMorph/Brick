@@ -69,7 +69,7 @@ Brick is a cross-platform stop motion application for Linux, Windows, and macOS.
 - **P9** — Generated data such as thumbnails and playback proxies is stored in `.cache/` at the root of the project. It can be deleted at any time and is rebuilt on demand.
 - **P10** — Only one instance of the program may have a project open at a time. Opening a project that is already open shows an error instead of opening it twice.
 - **P11** — Application settings that are not project data (recent projects, window layout, last used camera) are stored in the operating system's standard config directory.
-- **P12** — Config files are TOML. `project.conf` holds project settings such as the frame rate (P3). `scene.conf` holds the scene name and notes. `shot.conf` holds the shot name, notes, camera settings (CT7), and chosen take (DT6). `take.conf` holds the frame order, holds (AT10), and notes.
+- **P12** — Config files are TOML. `project.conf` holds project settings such as the frame rate (P3). `scene.conf` holds the scene name and notes. `shot.conf` holds the shot name, notes, camera settings (CT7), chosen take (DT6), and the next take and test shot numbers so numbers are never reused (P5, DT2). `take.conf` holds the frame order, holds (AT10), and notes.
 - **P13** — Scene and shot directories are named `NNNN_NAME`, where `NNNN` is the four digit position starting at `0001` and `NAME` is the user given name in upper case with spaces and characters that are not letters or digits replaced by underscores. Renaming or reordering a scene or shot renames its directory. Take directories are named `NNNN_TAKE`, where `NNNN` is the take number (DT2).
 - **P14** — `preview/high_res/` holds the full resolution JPEG of each capture. `preview/low_res/` holds the live view frame grabbed at the moment of capture, used by the default animation preview (AT4). `RAW/` holds the camera RAW file when the camera captures RAW (C4) and keeps the camera's extension (for example `.cr3`).
 - **P15** — Test shots (CT5) are stored in the shot's `tests/` folder, numbered the same way as frames (P5).
@@ -118,7 +118,7 @@ Brick is a cross-platform stop motion application for Linux, Windows, and macOS.
 - **CT4** — Optional overlays include a rule of thirds grid, a center mark, and safe area guides for common aspect ratios.
 - **CT5** — Test shots can be captured from this tab. They are stored in the active shot's `tests/` folder (P15) and are never part of the take's animation.
 - **CT6** — Test shots can be viewed full size and compared side by side with live view.
-- **CT7** — Camera settings are saved per shot. When a take is made active, the saved settings for its shot are applied to the camera, so every take of a shot uses the same exposure.
+- **CT7** — Camera settings are saved per shot. When a take is made active, the saved settings for its shot are applied to the camera, so every take of a shot uses the same exposure. Settings a shot has not saved yet are taken from the camera and saved when the shot is first used with a camera.
 - **CT8** — Camera settings can only be changed on this tab. The Animation tab does not show them and cannot change them, so settings are never bumped by accident while animating.
 
 ## Animation Tab

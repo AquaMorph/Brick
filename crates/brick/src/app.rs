@@ -4,13 +4,16 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 use eframe::egui::{self, Align, Layout, RichText};
 
+use crate::camera::{CameraEvent, Cameras, Connection, Setting};
+use crate::cinematography::{self, CinematographyTab};
 use crate::direct::DirectTab;
 use crate::file_menu::{self, FileAction};
 use crate::picker;
-use crate::project::{self, Project};
+use crate::project::{self, Project, ShotKey};
 use crate::project_dialog::{DialogKind, DialogResult, ProjectDialog};
 use crate::settings::Settings;
 use crate::theme;
@@ -55,6 +58,16 @@ pub struct BrickApp {
     tab: Tab,
     project: Option<Project>,
     direct: DirectTab,
+    cinematography: CinematographyTab,
+    cameras: Cameras,
+    /// The shot a running test shot capture belongs to (CT5).
+    pending_test: Option<ShotKey>,
+    /// Setting changes the user asked for that the camera has not confirmed
+    /// yet, with the shot to save them to (CT7).
+    pending_settings: Vec<(ShotKey, Setting, String)>,
+    /// The shot whose camera settings were last applied to the open camera
+    /// (CT7).
+    applied_shot: Option<ShotKey>,
     settings: Settings,
     dialog: Option<ProjectDialog>,
     copy: Option<CopyJob>,
@@ -65,6 +78,9 @@ pub struct BrickApp {
     /// Errors shown at the top of the window until dismissed (U5).
     errors: Vec<String>,
 }
+
+/// How long closing a project waits for a running capture to be written (F9).
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A Save Project As copy running on a background thread (F6).
 struct CopyJob {
@@ -77,10 +93,16 @@ impl BrickApp {
     /// last opened project is opened (R9).
     pub fn new(ctx: &egui::Context, from_args: Option<project::Result<Project>>) -> Self {
         let (settings, settings_error) = Settings::load();
+        let cameras = Cameras::new(ctx, settings.last_camera().map(str::to_owned));
         let mut app = Self {
             tab: Tab::Direct,
             project: None,
             direct: DirectTab::default(),
+            cinematography: CinematographyTab::default(),
+            cameras,
+            pending_test: None,
+            pending_settings: Vec::new(),
+            applied_shot: None,
             settings,
             dialog: None,
             copy: None,
@@ -139,6 +161,11 @@ impl eframe::App for BrickApp {
         let ctx = ui.ctx().clone();
         self.update_title(&ctx);
         self.poll_copy(&ctx);
+        self.cameras
+            .set_live_view(self.project.is_some() && self.tab == Tab::Cinematography);
+        let events = self.cameras.poll();
+        self.camera_events(events);
+        self.apply_shot_camera();
 
         let mut actions = Vec::new();
         #[cfg(target_os = "macos")]
@@ -167,7 +194,9 @@ impl eframe::App for BrickApp {
 
         egui::Panel::bottom("status_bar")
             .frame(bar_frame())
-            .show(ui, |ui| status_bar(ui, self.project.as_ref()));
+            .show(ui, |ui| {
+                status_bar(ui, self.project.as_ref(), self.cameras.connection());
+            });
 
         if !self.errors.is_empty() {
             egui::Panel::top("errors")
@@ -198,6 +227,7 @@ impl eframe::App for BrickApp {
     }
 
     fn on_exit(&mut self) {
+        self.finish_capture();
         if let Some(project) = &mut self.project {
             self.direct.commit_edits(project, &mut self.errors);
         }
@@ -286,18 +316,37 @@ impl BrickApp {
         }
         self.project = Some(project);
         self.direct = DirectTab::default();
+        self.cinematography = CinematographyTab::default();
+        self.applied_shot = None;
         self.tab = Tab::Direct;
     }
 
     /// Closes the open project and returns to the project picker (F8, F9).
     /// Every change is already on disk (P6), so there is nothing to ask.
     fn close_project(&mut self) {
+        self.finish_capture();
         if let Some(project) = &mut self.project {
             self.direct.commit_edits(project, &mut self.errors);
         }
         self.project = None;
         self.direct = DirectTab::default();
+        self.cinematography = CinematographyTab::default();
+        self.pending_settings.clear();
+        self.applied_shot = None;
         self.tab = Tab::Direct;
+    }
+
+    /// Waits for a running capture and writes it before the project closes
+    /// (F9, P7).
+    fn finish_capture(&mut self) {
+        if self.cameras.is_capturing() {
+            let events = self.cameras.finish_capture(CAPTURE_TIMEOUT);
+            self.camera_events(events);
+        }
+        if self.pending_test.take().is_some() {
+            self.errors
+                .push("The camera did not finish the test shot before the project closed.".into());
+        }
     }
 
     fn show_dialog(&mut self, ctx: &egui::Context) {
@@ -431,6 +480,14 @@ impl BrickApp {
         };
         match self.tab {
             Tab::Direct => self.direct.ui(ui, project, &mut self.errors),
+            Tab::Cinematography => {
+                let mut actions = Vec::new();
+                self.cinematography
+                    .ui(ui, project, &mut self.cameras, &mut actions);
+                for action in actions {
+                    self.cinematography_action(action);
+                }
+            }
             tab => {
                 ui.centered_and_justified(|ui| {
                     ui.label(
@@ -440,6 +497,150 @@ impl BrickApp {
                     );
                 });
             }
+        }
+    }
+}
+
+// Cameras (C5-C7, CT5, CT7).
+impl BrickApp {
+    fn cinematography_action(&mut self, action: cinematography::Action) {
+        let active_key = self.active_shot_key();
+        match action {
+            cinematography::Action::Connect(id) => {
+                self.cameras.connect(&id);
+                if let Err(e) = self.settings.set_last_camera(&id) {
+                    self.errors
+                        .push(format!("Could not save the last used camera: {e}"));
+                }
+            }
+            cinematography::Action::Set(setting, value) => {
+                if let Some(key) = active_key {
+                    self.cameras.set(setting, &value);
+                    self.pending_settings.push((key, setting, value));
+                }
+            }
+            cinematography::Action::TestShot => {
+                if active_key.is_some() && self.cameras.capture() {
+                    self.pending_test = active_key;
+                }
+            }
+        }
+    }
+
+    fn camera_events(&mut self, events: Vec<CameraEvent>) {
+        for event in events {
+            match event {
+                CameraEvent::Connected => {
+                    self.applied_shot = None;
+                    self.pending_settings.clear();
+                }
+                CameraEvent::SettingChanged(setting, value) => {
+                    let Some(index) = self
+                        .pending_settings
+                        .iter()
+                        .position(|(_, s, v)| *s == setting && *v == value)
+                    else {
+                        continue;
+                    };
+                    let (key, _, _) = self.pending_settings.remove(index);
+                    self.save_shot_setting(key, setting, value);
+                }
+                CameraEvent::Captured(capture) => {
+                    let key = self.pending_test.take();
+                    let target = self
+                        .project
+                        .as_mut()
+                        .and_then(|p| Some((key?, p.find_shot(key?)?, p)));
+                    let Some((key, shot, project)) = target else {
+                        self.errors.push(
+                            "The test shot was not saved because its shot no longer exists.".into(),
+                        );
+                        continue;
+                    };
+                    match project.add_test_shot(shot, &capture) {
+                        Ok(number) => {
+                            if self.applied_shot == Some(key) {
+                                self.cinematography.show_test(number);
+                            }
+                        }
+                        Err(e) => self
+                            .errors
+                            .push(format!("Could not save the test shot: {e}")),
+                    }
+                }
+                CameraEvent::Error(message) => {
+                    if !self.cameras.is_capturing() {
+                        self.pending_test = None;
+                    }
+                    self.errors.push(message);
+                }
+            }
+        }
+    }
+
+    fn active_shot_key(&self) -> Option<ShotKey> {
+        let project = self.project.as_ref()?;
+        Some(project.shot(project.active()?.shot_id())?.key())
+    }
+
+    fn save_shot_setting(&mut self, key: ShotKey, setting: Setting, value: String) {
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        let Some(shot) = project.find_shot(key) else {
+            return;
+        };
+        let Some(mut camera) = project.shot(shot).map(|s| s.camera().clone()) else {
+            return;
+        };
+        camera.set(setting, Some(value));
+        if let Err(e) = project.set_shot_camera(shot, &camera) {
+            self.errors
+                .push(format!("Could not save the camera settings: {e}"));
+        }
+    }
+
+    /// Sets the camera to the active shot's saved settings whenever the
+    /// active shot or the camera changes, so every take of a shot uses the
+    /// same exposure (CT7). Settings the shot has not saved yet are taken
+    /// from the camera and saved.
+    fn apply_shot_camera(&mut self) {
+        if !self.cameras.is_connected() {
+            return;
+        }
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        let Some(id) = project.active().map(|take| take.shot_id()) else {
+            return;
+        };
+        let Some(shot) = project.shot(id) else {
+            return;
+        };
+        if self.applied_shot == Some(shot.key()) {
+            return;
+        }
+        self.applied_shot = Some(shot.key());
+        let saved = shot.camera().clone();
+        let current = self.cameras.settings().clone();
+        let mut complete = saved.clone();
+        for control in self.cameras.controls() {
+            match saved.get(control.setting) {
+                Some(value) if current.get(control.setting) != Some(value) => {
+                    self.cameras.set(control.setting, value);
+                }
+                Some(_) => {}
+                None => complete.set(
+                    control.setting,
+                    current.get(control.setting).map(str::to_owned),
+                ),
+            }
+        }
+        if complete != saved
+            && let Err(e) = project.set_shot_camera(id, &complete)
+        {
+            self.errors
+                .push(format!("Could not save the camera settings: {e}"));
         }
     }
 }
@@ -457,7 +658,7 @@ fn copying(ctx: &egui::Context, dest: &Path) {
     });
 }
 
-fn status_bar(ui: &mut egui::Ui, project: Option<&Project>) {
+fn status_bar(ui: &mut egui::Ui, project: Option<&Project>, camera: &Connection) {
     let active = project.and_then(|p| Some((p, p.active()?)));
     let take = active.and_then(|(p, id)| {
         let scene = p.scene(id.scene)?;
@@ -468,7 +669,13 @@ fn status_bar(ui: &mut egui::Ui, project: Option<&Project>) {
         ))
     });
     ui.horizontal(|ui| {
-        status_item(ui, "Camera", "None connected");
+        let camera = match camera {
+            Connection::None => "None connected".to_owned(),
+            Connection::Connecting(info) => format!("{} (connecting…)", info.name),
+            Connection::Connected(info) => format!("{} (connected)", info.name),
+            Connection::Lost(info, _) => format!("{} (disconnected)", info.name),
+        };
+        status_item(ui, "Camera", &camera);
         ui.separator();
         match &take {
             Some((label, _)) => status_item(ui, "Active", label),

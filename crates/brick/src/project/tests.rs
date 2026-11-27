@@ -247,3 +247,61 @@ fn copy_refuses_existing_destination() {
     assert!(dest.join("keep").is_file());
     assert_eq!(dirs(dir.path()), ["Film", "Taken"]);
 }
+
+fn capture(byte: u8) -> Capture {
+    Capture {
+        jpeg: vec![byte; 4],
+        raw: Some(("cr3".into(), vec![byte; 8])),
+    }
+}
+
+#[test]
+fn test_shots_are_numbered_and_never_reused() {
+    let (_dir, mut project) = new_project();
+    let scene = project.add_scene("Scene").unwrap();
+    let shot = project.add_shot(scene, "Shot").unwrap();
+
+    assert_eq!(project.add_test_shot(shot, &capture(1)).unwrap(), 1);
+    assert_eq!(project.add_test_shot(shot, &capture(2)).unwrap(), 2);
+    let tests = project.root().join("0001_SCENE/0001_SHOT/tests");
+    assert_eq!(fs::read(tests.join("000002.jpg")).unwrap(), [2; 4]);
+    assert_eq!(fs::read(tests.join("000002.cr3")).unwrap(), [2; 8]);
+    assert_eq!(project.test_shot_path(shot, 2), tests.join("000002.jpg"));
+
+    // Removing the newest test by hand must not free its number (P5).
+    fs::remove_file(tests.join("000002.jpg")).unwrap();
+    let root = project.root().to_owned();
+    drop(project);
+    let mut project = Project::open(&root).unwrap();
+    assert_eq!(project.shot(shot).unwrap().tests(), [1]);
+    assert_eq!(project.add_test_shot(shot, &capture(3)).unwrap(), 3);
+    assert_eq!(project.shot(shot).unwrap().tests(), [1, 3]);
+}
+
+#[test]
+fn shot_camera_settings_round_trip() {
+    let (_dir, mut project) = new_project();
+    let scene = project.add_scene("Scene").unwrap();
+    let shot = project.add_shot(scene, "Shot").unwrap();
+    let mut settings = CameraSettings::default();
+    settings.set(crate::camera::Setting::Aperture, Some("f/8".into()));
+    project.set_shot_camera(shot, &settings).unwrap();
+
+    let root = project.root().to_owned();
+    drop(project);
+    let project = Project::open(&root).unwrap();
+    assert_eq!(project.shot(shot).unwrap().camera(), &settings);
+}
+
+#[test]
+fn shot_keys_follow_moved_shots() {
+    let (_dir, mut project) = new_project();
+    let scene = project.add_scene("Scene").unwrap();
+    let first = project.add_shot(scene, "A").unwrap();
+    project.add_shot(scene, "B").unwrap();
+    let key = project.shot(first).unwrap().key();
+    project.move_shot(first, 1).unwrap();
+    assert_eq!(project.find_shot(key), Some(ShotId { scene, shot: 1 }));
+    project.remove_shot(ShotId { scene, shot: 1 }).unwrap();
+    assert_eq!(project.find_shot(key), None);
+}

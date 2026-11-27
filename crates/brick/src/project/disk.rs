@@ -50,6 +50,45 @@ fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
     sync_parent(path)
 }
 
+/// Writes a captured image and flushes it to disk before returning (P7). The
+/// image is written under a temporary name first, so a crash never leaves a
+/// partial image under its real name. An existing image is never replaced
+/// (P5).
+pub fn write_image(path: &Path, contents: &[u8]) -> Result<(), Error> {
+    if path.exists() {
+        return Err(Error::io(
+            path,
+            io::Error::new(io::ErrorKind::AlreadyExists, "already exists"),
+        ));
+    }
+    write_atomic(path, contents).map_err(|e| Error::io(path, e))
+}
+
+/// The numbers of the captured images in `dir` with `extension`, in order
+/// (P5). A missing directory has no images.
+pub fn image_numbers(dir: &Path, extension: &str) -> Result<Vec<u32>, Error> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(Error::io(dir, e)),
+    };
+    let mut numbers = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| Error::io(dir, e))?;
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        let Some((stem, ext)) = name.split_once('.') else {
+            continue;
+        };
+        if ext == extension && stem.len() == 6 && stem.bytes().all(|b| b.is_ascii_digit()) {
+            numbers.extend(stem.parse::<u32>().ok());
+        }
+    }
+    numbers.sort_unstable();
+    Ok(numbers)
+}
+
 /// Creates a directory and flushes the new entry to disk.
 pub fn create_dir(path: &Path) -> Result<(), Error> {
     fs::create_dir_all(path).map_err(|e| Error::io(path, e))?;

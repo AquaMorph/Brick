@@ -28,6 +28,9 @@ struct SettingsFile {
     /// Most recently opened first.
     #[serde(default)]
     recent: Vec<RecentProject>,
+    /// The id of the last used camera, reconnected to automatically (C5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_camera: Option<String>,
 }
 
 pub struct Settings {
@@ -73,6 +76,19 @@ impl Settings {
             },
         );
         self.file.recent.truncate(MAX_RECENT);
+        self.save()
+    }
+
+    pub fn last_camera(&self) -> Option<&str> {
+        self.file.last_camera.as_deref()
+    }
+
+    /// Remembers the camera the user picked (C5).
+    pub fn set_last_camera(&mut self, id: &str) -> project::Result<()> {
+        if self.file.last_camera.as_deref() == Some(id) {
+            return Ok(());
+        }
+        self.file.last_camera = Some(id.to_owned());
         self.save()
     }
 
