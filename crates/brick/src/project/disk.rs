@@ -57,7 +57,7 @@ pub fn create_dir(path: &Path) -> Result<(), Error> {
 }
 
 /// Renames a directory and flushes the change to disk.
-fn rename(from: &Path, to: &Path) -> Result<(), Error> {
+pub fn rename(from: &Path, to: &Path) -> Result<(), Error> {
     if to.exists() {
         return Err(Error::io(
             to,
@@ -70,7 +70,7 @@ fn rename(from: &Path, to: &Path) -> Result<(), Error> {
 
 /// Flushes the directory entry of `path` so a rename or create survives power
 /// loss (R13). Only possible on Unix; Windows flushes metadata on its own.
-fn sync_parent(path: &Path) -> io::Result<()> {
+pub fn sync_parent(path: &Path) -> io::Result<()> {
     #[cfg(unix)]
     if let Some(parent) = path.parent() {
         File::open(parent)?.sync_all()?;

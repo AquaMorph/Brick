@@ -11,8 +11,9 @@ fn new_project() -> (tempfile::TempDir, Project) {
 fn dirs(path: &Path) -> Vec<String> {
     let mut names: Vec<String> = fs::read_dir(path)
         .unwrap()
-        .map(|e| e.unwrap().file_name().into_string().unwrap())
-        .filter(|n| !n.ends_with(".conf"))
+        .map(|e| e.unwrap())
+        .filter(|e| e.file_type().unwrap().is_dir())
+        .map(|e| e.file_name().into_string().unwrap())
         .collect();
     names.sort();
     names
@@ -30,13 +31,14 @@ fn hierarchy_round_trips_through_disk() {
     project.set_chosen_take(shot, Some(take.take)).unwrap();
     project.set_active(Some(take)).unwrap();
 
-    let root = project.root();
+    let root = project.root().to_owned();
     assert!(
         root.join("0001_SCENE_ONE/0001_WIDE/0001_TAKE/take.conf")
             .is_file()
     );
 
-    let reopened = Project::open(root).unwrap();
+    drop(project);
+    let reopened = Project::open(&root).unwrap();
     assert_eq!(reopened.name(), "Film");
     assert_eq!(reopened.frame_rate().fps(), 12);
     assert_eq!(reopened.scenes()[0].name(), "Scene One");
@@ -83,7 +85,9 @@ fn rename_and_reorder_rename_directories() {
             .is_dir()
     );
 
-    let reopened = Project::open(project.root()).unwrap();
+    let root = project.root().to_owned();
+    drop(project);
+    let reopened = Project::open(&root).unwrap();
     assert_eq!(reopened.scenes()[0].name(), "Big b");
     assert_eq!(reopened.active().unwrap().scene, 0);
 }
@@ -143,7 +147,9 @@ fn take_numbers_are_never_reused() {
     let third = project.add_take(shot).unwrap();
     assert_eq!(third.take, 3);
 
-    let reopened = Project::open(project.root()).unwrap();
+    let root = project.root().to_owned();
+    drop(project);
+    let reopened = Project::open(&root).unwrap();
     let numbers: Vec<_> = reopened
         .shot(shot)
         .unwrap()
@@ -162,6 +168,7 @@ fn open_repairs_interrupted_rename() {
     let root = project.root().to_owned();
     // A crash after the first rename of moving B in front of A.
     fs::rename(root.join("0002_B"), root.join("0001_B.moving")).unwrap();
+    drop(project);
 
     let reopened = Project::open(&root).unwrap();
     let names: Vec<_> = reopened.scenes().iter().map(Scene::name).collect();
@@ -186,4 +193,57 @@ fn index_helpers() {
     assert_eq!(moved_index(0, 2, 0), 1);
     assert_eq!(removed_index(1, 1), None);
     assert_eq!(removed_index(2, 1), Some(1));
+}
+
+#[test]
+fn an_open_project_cannot_be_opened_again() {
+    let (_dir, project) = new_project();
+    let root = project.root().to_owned();
+    assert!(Project::open(&root).is_err());
+    drop(project);
+    assert!(Project::open(&root).is_ok());
+}
+
+#[test]
+fn project_dir_names_replace_unsafe_characters() {
+    assert_eq!(project_dir_name(" My Film: Part 2 "), "My_Film__Part_2");
+    assert_eq!(project_dir_name("clay-test_1"), "clay-test_1");
+}
+
+#[test]
+fn copy_includes_trash_but_not_cache() {
+    let (dir, mut project) = new_project();
+    let a = project.add_scene("A").unwrap();
+    project.add_scene("B").unwrap();
+    project.remove_scene(a).unwrap();
+    let root = project.root().to_owned();
+    fs::create_dir(root.join(CACHE_DIR)).unwrap();
+    fs::write(root.join(CACHE_DIR).join("thumb.jpg"), "x").unwrap();
+
+    let dest = dir.path().join("Copy");
+    copy_project(&root, &dest, "Copy").unwrap();
+
+    assert_eq!(dirs(&dest), [".trash", "0001_B"]);
+    assert!(!dest.join(LOCK_FILE).exists());
+    // The source is unchanged and still open.
+    assert_eq!(dirs(&root), [".cache", ".trash", "0001_B"]);
+    assert_eq!(project.name(), "Film");
+
+    let copy = Project::open(&dest).unwrap();
+    assert_eq!(copy.name(), "Copy");
+    assert_eq!(copy.scenes()[0].name(), "B");
+    // No temporary directory is left behind.
+    assert_eq!(dirs(dir.path()), ["Copy", "Film"]);
+}
+
+#[test]
+fn copy_refuses_existing_destination() {
+    let (dir, project) = new_project();
+    let dest = dir.path().join("Taken");
+    fs::create_dir(&dest).unwrap();
+    fs::write(dest.join("keep"), "x").unwrap();
+
+    assert!(copy_project(project.root(), &dest, "Taken").is_err());
+    assert!(dest.join("keep").is_file());
+    assert_eq!(dirs(dir.path()), ["Film", "Taken"]);
 }

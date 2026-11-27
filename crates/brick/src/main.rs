@@ -2,7 +2,11 @@
 
 mod app;
 mod direct;
+mod file_menu;
+mod picker;
 mod project;
+mod project_dialog;
+mod settings;
 mod theme;
 
 use std::path::PathBuf;
@@ -30,23 +34,21 @@ fn main() -> eframe::Result {
         Box::new(|cc| {
             theme::apply(&cc.egui_ctx);
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(app::BrickApp::new(open_from_args())))
+            Ok(Box::new(app::BrickApp::new(&cc.egui_ctx, open_from_args())))
         }),
     )
 }
 
 /// Opens the project folder given on the command line, creating a new
 /// project there if it does not hold one yet.
-fn open_from_args() -> project::Result<Option<Project>> {
-    let Some(root) = std::env::args_os().nth(1).map(PathBuf::from) else {
-        return Ok(None);
-    };
+fn open_from_args() -> Option<project::Result<Project>> {
+    let root = std::env::args_os().nth(1).map(PathBuf::from)?;
     if Project::exists(&root) {
-        return Project::open(&root).map(Some);
+        return Some(Project::open(&root));
     }
     let name = root
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Untitled".to_owned());
-    Project::create(&root, &name, FrameRate::default()).map(Some)
+    Some(Project::create(&root, &name, FrameRate::default()))
 }

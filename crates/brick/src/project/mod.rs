@@ -3,9 +3,11 @@
 //! Every change made through [`Project`] is written to disk before the call
 //! returns (P6), so the in-memory model always matches the project directory.
 
-mod disk;
+mod copy;
+pub(crate) mod disk;
 
 use std::fmt;
+use std::fs::{File, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -15,6 +17,12 @@ const PROJECT_CONF: &str = "project.conf";
 const SCENE_CONF: &str = "scene.conf";
 const SHOT_CONF: &str = "shot.conf";
 const TAKE_CONF: &str = "take.conf";
+/// File locked while a project is open, so only one instance can open it (P10).
+const LOCK_FILE: &str = ".lock";
+/// Generated data that can be rebuilt at any time (P9).
+const CACHE_DIR: &str = ".cache";
+
+pub use copy::copy_project;
 
 /// Longest scene or shot name accepted, keeping directory paths well within
 /// platform path limits.
@@ -281,6 +289,9 @@ impl Take {
 }
 
 pub struct Project {
+    /// Held for as long as the project is open (P10). The operating system
+    /// releases the lock when the file is dropped or the process exits.
+    _lock: File,
     root: PathBuf,
     name: String,
     frame_rate: FrameRate,
@@ -302,6 +313,7 @@ impl Project {
         }
         disk::create_dir(root)?;
         let project = Project {
+            _lock: lock(root)?,
             root: root.to_owned(),
             name,
             frame_rate,
@@ -321,12 +333,14 @@ impl Project {
     /// position and name (P13), for example after a crash part way through a
     /// reorder, are corrected.
     pub fn open(root: &Path) -> Result<Self> {
+        let lock = lock(root)?;
         let conf: ProjectConf = disk::read_config(&root.join(PROJECT_CONF))?;
         let mut scenes = Vec::new();
         for dir in disk::level_dirs(root, SCENE_CONF)? {
             scenes.push(load_scene(&root.join(&dir), dir)?);
         }
         let mut project = Project {
+            _lock: lock,
             root: root.to_owned(),
             name: conf.name,
             frame_rate: conf.frame_rate,
@@ -740,7 +754,43 @@ fn load_shot(path: &Path, dir: String) -> Result<Shot> {
     })
 }
 
-/// Trims a scene or shot name and checks it can be used.
+/// Takes the lock that keeps a second instance from opening the project
+/// (P10).
+fn lock(root: &Path) -> Result<File> {
+    let path = root.join(LOCK_FILE);
+    let file = File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| Error::io(&path, e))?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(TryLockError::WouldBlock) => Err(Error::Invalid(format!(
+            "{} is already open in Brick.",
+            root.display()
+        ))),
+        Err(TryLockError::Error(e)) => Err(Error::io(&path, e)),
+    }
+}
+
+/// The directory name for a new project called `name`: the name with
+/// characters that are not letters, digits, `-`, or `_` replaced by
+/// underscores (P4).
+pub fn project_dir_name(name: &str) -> String {
+    name.trim()
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Trims a project, scene, or shot name and checks it can be used.
 fn clean_name(name: &str) -> Result<String> {
     let name = name.trim();
     if name.is_empty() {

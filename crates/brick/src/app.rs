@@ -1,9 +1,18 @@
-//! The main window: tab bar, active tab, and status bar (U3, W2).
+//! The main window: File menu, tab bar, active tab, and status bar (U3, W2),
+//! and opening, creating, copying, and closing projects (F1-F10).
+
+use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
 
 use eframe::egui::{self, Align, Layout, RichText};
 
 use crate::direct::DirectTab;
+use crate::file_menu::{self, FileAction};
+use crate::picker;
 use crate::project::{self, Project};
+use crate::project_dialog::{DialogKind, DialogResult, ProjectDialog};
+use crate::settings::Settings;
 use crate::theme;
 
 /// The stages of a project, in the order the user moves through them (W2).
@@ -46,30 +55,115 @@ pub struct BrickApp {
     tab: Tab,
     project: Option<Project>,
     direct: DirectTab,
+    settings: Settings,
+    dialog: Option<ProjectDialog>,
+    copy: Option<CopyJob>,
+    /// The window title last sent to the window.
+    title: String,
+    #[cfg(target_os = "macos")]
+    native_menu: Option<file_menu::NativeMenu>,
     /// Errors shown at the top of the window until dismissed (U5).
     errors: Vec<String>,
 }
 
+/// A Save Project As copy running on a background thread (F6).
+struct CopyJob {
+    dest: PathBuf,
+    done: mpsc::Receiver<project::Result<()>>,
+}
+
 impl BrickApp {
-    pub fn new(project: project::Result<Option<Project>>) -> Self {
-        let (project, errors) = match project {
-            Ok(project) => (project, Vec::new()),
-            Err(e) => (None, vec![format!("Could not open the project: {e}")]),
-        };
-        Self {
+    /// `from_args` is the project given on the command line. Without one the
+    /// last opened project is opened (R9).
+    pub fn new(ctx: &egui::Context, from_args: Option<project::Result<Project>>) -> Self {
+        let (settings, settings_error) = Settings::load();
+        let mut app = Self {
             tab: Tab::Direct,
-            project,
+            project: None,
             direct: DirectTab::default(),
-            errors,
+            settings,
+            dialog: None,
+            copy: None,
+            title: String::new(),
+            #[cfg(target_os = "macos")]
+            native_menu: None,
+            errors: Vec::new(),
+        };
+        if let Some(e) = settings_error {
+            app.errors
+                .push(format!("Could not read the application settings: {e}"));
+        }
+        #[cfg(target_os = "macos")]
+        match file_menu::NativeMenu::install(ctx) {
+            Ok(menu) => app.native_menu = Some(menu),
+            Err(e) => app
+                .errors
+                .push(format!("Could not create the menu bar: {e}")),
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = ctx;
+
+        match from_args {
+            Some(Ok(project)) => app.set_project(project),
+            Some(Err(e)) => app.errors.push(format!("Could not open the project: {e}")),
+            None => app.open_last_project(),
+        }
+        app
+    }
+
+    /// Opens the last opened project, or explains why it could not be opened
+    /// and leaves the project picker showing (R9).
+    fn open_last_project(&mut self) {
+        let Some(last) = self.settings.recent().first().cloned() else {
+            return;
+        };
+        if !last.exists() {
+            self.errors.push(format!(
+                "The last project, {}, no longer exists.",
+                last.path.display()
+            ));
+            return;
+        }
+        match Project::open(&last.path) {
+            Ok(project) => self.set_project(project),
+            Err(e) => self.errors.push(format!(
+                "Could not open the last project, {}: {e}",
+                last.path.display()
+            )),
         }
     }
 }
 
 impl eframe::App for BrickApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        egui::Panel::top("tab_bar")
-            .frame(bar_frame())
-            .show(ui, |ui| self.tab_bar(ui));
+        let ctx = ui.ctx().clone();
+        self.update_title(&ctx);
+        self.poll_copy(&ctx);
+
+        let mut actions = Vec::new();
+        #[cfg(target_os = "macos")]
+        if let Some(menu) = &mut self.native_menu {
+            menu.update(self.project.is_some(), self.settings.recent());
+            actions.extend(menu.poll());
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            if self.dialog.is_none() && self.copy.is_none() {
+                actions.extend(file_menu::shortcuts(&ctx, self.project.is_some()));
+            }
+            egui::Panel::top("menu_bar")
+                .frame(menu_bar_frame())
+                .show(ui, |ui| {
+                    let has_project = self.project.is_some();
+                    actions.extend(file_menu::menu_bar(ui, has_project, self.settings.recent()));
+                });
+        }
+
+        if self.project.is_some() {
+            egui::Panel::top("tab_bar")
+                .frame(bar_frame())
+                .show(ui, |ui| self.tab_bar(ui));
+        }
 
         egui::Panel::bottom("status_bar")
             .frame(bar_frame())
@@ -85,12 +179,210 @@ impl eframe::App for BrickApp {
                 .show(ui, |ui| self.error_list(ui));
         }
 
-        egui::CentralPanel::no_frame().show(ui, |ui| self.tab_content(ui));
+        egui::CentralPanel::no_frame().show(ui, |ui| {
+            if self.project.is_some() {
+                self.tab_content(ui);
+            } else {
+                actions.extend(picker::ui(ui, self.settings.recent()));
+            }
+        });
+
+        self.show_dialog(&ctx);
+        if let Some(copy) = &self.copy {
+            copying(&ctx, &copy.dest);
+        }
+
+        for action in actions {
+            self.file_action(&ctx, action);
+        }
     }
 
     fn on_exit(&mut self) {
         if let Some(project) = &mut self.project {
             self.direct.commit_edits(project, &mut self.errors);
+        }
+    }
+}
+
+// Opening, creating, copying, and closing projects (F3-F9).
+impl BrickApp {
+    fn file_action(&mut self, ctx: &egui::Context, action: FileAction) {
+        // Nothing may change the open project while it is being copied.
+        if self.copy.is_some() && action != FileAction::Quit {
+            return;
+        }
+        match action {
+            FileAction::New => {
+                let location = directories::UserDirs::new().map(|dirs| {
+                    dirs.document_dir()
+                        .unwrap_or_else(|| dirs.home_dir())
+                        .to_owned()
+                });
+                self.dialog = Some(ProjectDialog::new(DialogKind::New, "", location.as_deref()));
+            }
+            FileAction::Open => {
+                let mut picker = rfd::FileDialog::new().set_title("Open Project");
+                if let Some(parent) = self.project.as_ref().and_then(|p| p.root().parent()) {
+                    picker = picker.set_directory(parent);
+                }
+                if let Some(path) = picker.pick_folder() {
+                    self.open_project(&path);
+                }
+            }
+            FileAction::OpenRecent(path) => self.open_project(&path),
+            FileAction::ClearRecent => {
+                if let Err(e) = self.settings.clear_recent() {
+                    self.errors
+                        .push(format!("Could not save the recent projects: {e}"));
+                }
+            }
+            FileAction::SaveAs => {
+                let Some(project) = &self.project else {
+                    return;
+                };
+                self.dialog = Some(ProjectDialog::new(
+                    DialogKind::SaveAs,
+                    &format!("{} copy", project.name()),
+                    project.root().parent(),
+                ));
+            }
+            FileAction::Close => self.close_project(),
+            FileAction::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+        }
+    }
+
+    /// Opens the project in `path` in place of the open one (F4, F9). The
+    /// open project stays open if the new one cannot be opened.
+    fn open_project(&mut self, path: &Path) {
+        let same = |root: &Path| match (path.canonicalize(), root.canonicalize()) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => path == root,
+        };
+        if self.project.as_ref().is_some_and(|p| same(p.root())) {
+            return;
+        }
+        if !Project::exists(path) {
+            self.errors.push(format!(
+                "{} is not a Brick project because it has no project.conf.",
+                path.display()
+            ));
+            return;
+        }
+        match Project::open(path) {
+            Ok(project) => {
+                self.close_project();
+                self.set_project(project);
+            }
+            Err(e) => self.errors.push(format!("Could not open the project: {e}")),
+        }
+    }
+
+    /// Makes `project` the open project and remembers it as the most recent
+    /// one (R9, P11).
+    fn set_project(&mut self, project: Project) {
+        if let Err(e) = self.settings.add_recent(project.root(), project.name()) {
+            self.errors
+                .push(format!("Could not save the recent projects: {e}"));
+        }
+        self.project = Some(project);
+        self.direct = DirectTab::default();
+        self.tab = Tab::Direct;
+    }
+
+    /// Closes the open project and returns to the project picker (F8, F9).
+    /// Every change is already on disk (P6), so there is nothing to ask.
+    fn close_project(&mut self) {
+        if let Some(project) = &mut self.project {
+            self.direct.commit_edits(project, &mut self.errors);
+        }
+        self.project = None;
+        self.direct = DirectTab::default();
+        self.tab = Tab::Direct;
+    }
+
+    fn show_dialog(&mut self, ctx: &egui::Context) {
+        let Some(mut dialog) = self.dialog.take() else {
+            return;
+        };
+        match dialog.show(ctx) {
+            None => self.dialog = Some(dialog),
+            Some(DialogResult::Cancel) => {}
+            Some(DialogResult::Submit {
+                dest,
+                name,
+                frame_rate,
+            }) => match dialog.kind() {
+                DialogKind::New => match Project::create(&dest, &name, frame_rate) {
+                    Ok(project) => {
+                        self.close_project();
+                        self.set_project(project);
+                    }
+                    Err(e) => {
+                        dialog.set_error(format!("Could not create the project: {e}"));
+                        self.dialog = Some(dialog);
+                    }
+                },
+                DialogKind::SaveAs => self.start_copy(dest, name),
+            },
+        }
+    }
+
+    /// Copies the open project on a background thread so the window keeps
+    /// drawing while large RAW files are copied (F6).
+    fn start_copy(&mut self, dest: PathBuf, name: String) {
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        self.direct.commit_edits(project, &mut self.errors);
+        let source = project.root().to_owned();
+        let (sender, done) = mpsc::channel();
+        let job_dest = dest.clone();
+        thread::spawn(move || {
+            let _ = sender.send(project::copy_project(&source, &job_dest, &name));
+        });
+        self.copy = Some(CopyJob { dest, done });
+    }
+
+    fn poll_copy(&mut self, ctx: &egui::Context) {
+        let Some(copy) = &self.copy else {
+            return;
+        };
+        let result = match copy.done.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                return;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => Err(project::Error::Invalid(
+                "The copy stopped unexpectedly.".into(),
+            )),
+        };
+        let dest = copy.dest.clone();
+        self.copy = None;
+        match result {
+            Ok(()) => match Project::open(&dest) {
+                Ok(project) => {
+                    self.close_project();
+                    self.set_project(project);
+                }
+                Err(e) => self
+                    .errors
+                    .push(format!("Could not open the copied project: {e}")),
+            },
+            Err(e) => self
+                .errors
+                .push(format!("Could not save the project as a copy: {e}")),
+        }
+    }
+
+    fn update_title(&mut self, ctx: &egui::Context) {
+        let title = match &self.project {
+            Some(project) => format!("{} — Brick", project.name()),
+            None => "Brick".to_owned(),
+        };
+        if title != self.title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.title = title;
         }
     }
 }
@@ -135,7 +427,6 @@ impl BrickApp {
 
     fn tab_content(&mut self, ui: &mut egui::Ui) {
         let Some(project) = &mut self.project else {
-            no_project(ui);
             return;
         };
         match self.tab {
@@ -153,15 +444,16 @@ impl BrickApp {
     }
 }
 
-fn no_project(ui: &mut egui::Ui) {
-    ui.vertical_centered(|ui| {
-        ui.add_space(ui.available_height() * 0.4);
-        ui.label(RichText::new("No project open").size(18.0));
+/// Shown while Save Project As copies the project (F6).
+fn copying(ctx: &egui::Context, dest: &Path) {
+    egui::Modal::new(egui::Id::unique("copying_project")).show(ctx, |ui| {
+        ui.set_width(420.0);
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(RichText::new("Copying project…").size(17.0).strong());
+        });
         ui.add_space(6.0);
-        ui.label(
-            RichText::new("Start Brick with a project folder: brick <folder>")
-                .color(theme::TEXT_DIM),
-        );
+        ui.label(RichText::new(dest.display().to_string()).color(theme::TEXT_DIM));
     });
 }
 
@@ -203,6 +495,13 @@ fn status_item(ui: &mut egui::Ui, label: &str, value: &str) {
 fn status_item_reversed(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.label(value);
     ui.label(RichText::new(label).color(theme::TEXT_DIM));
+}
+
+#[cfg(not(target_os = "macos"))]
+fn menu_bar_frame() -> egui::Frame {
+    egui::Frame::new()
+        .fill(theme::BACKGROUND)
+        .inner_margin(egui::Margin::symmetric(4, 2))
 }
 
 fn bar_frame() -> egui::Frame {
