@@ -454,6 +454,7 @@ dependencies = [
 name = "brick"
 version = "0.1.0"
 dependencies = [
+ "brick-v4l2",
  "directories",
  "eframe",
  "egui_extras",
@@ -463,6 +464,13 @@ dependencies = [
  "serde",
  "tempfile",
  "toml",
+]
+
+[[package]]
+name = "brick-v4l2"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

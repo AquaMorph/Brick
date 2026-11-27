@@ -1,0 +1,20 @@
+[package]
+name = "brick-v4l2"
+description = "Safe access to V4L2 video capture devices for Brick"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2.191"
+
+# R4: this crate holds the unsafe FFI code the rest of Brick is not allowed to
+# contain. Every unsafe block must say why it is sound.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"

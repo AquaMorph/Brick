@@ -32,3 +32,6 @@ tempfile = "3.27.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.22.0", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+brick-v4l2 = { path = "../brick-v4l2" }

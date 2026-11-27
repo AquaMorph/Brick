@@ -135,6 +135,7 @@ impl Camera for SimulatedCamera {
             shutter_speed: Some(SHUTTER_SPEEDS[self.shutter].0.into()),
             aperture: Some(APERTURES[self.aperture].0.into()),
             iso: Some(ISOS[self.iso].0.into()),
+            ..CameraSettings::default()
         }
     }
 
@@ -143,6 +144,7 @@ impl Camera for SimulatedCamera {
             Setting::ShutterSpeed => (&SHUTTER_SPEEDS, &mut self.shutter),
             Setting::Aperture => (&APERTURES, &mut self.aperture),
             Setting::Iso => (&ISOS, &mut self.iso),
+            Setting::Gain | Setting::WhiteBalance | Setting::Focus => (&[], &mut self.iso),
         };
         let index = table
             .iter()

@@ -532,7 +532,7 @@ fn controls(ui: &mut egui::Ui, project: &Project, cameras: &Cameras, actions: &m
     ui.label(RichText::new(state).color(color));
 
     ui.add_space(20.0);
-    ui.label(section_title("Exposure"));
+    ui.label(section_title("Camera settings"));
     ui.add_space(4.0);
     let active = project.active().map(|take| take.shot_id());
     let active_shot = active.and_then(|id| Some((project.scene(id.scene)?, project.shot(id)?)));

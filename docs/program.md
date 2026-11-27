@@ -112,7 +112,7 @@ Brick is a cross-platform stop motion application for Linux, Windows, and macOS.
 
 ## Cinematography Tab
 
-- **CT1** — DSLR control settings should be shutter speed, aperture, and ISO.
+- **CT1** — DSLR control settings should be shutter speed, aperture, and ISO. Webcam settings are exposure time (shown as a shutter speed), gain, white balance, and focus, where the device supports them. A webcam whose manual exposure only gives black frames keeps auto exposure and does not offer exposure time (C8).
 - **CT2** — The tab shows a live view of the active camera, filling as much of the available area as possible while keeping the camera's aspect ratio.
 - **CT3** — Live view can be magnified to check focus.
 - **CT4** — Optional overlays include a rule of thirds grid, a center mark, and safe area guides for common aspect ratios.

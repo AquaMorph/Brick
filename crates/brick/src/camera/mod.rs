@@ -8,6 +8,8 @@
 pub mod manager;
 #[cfg(debug_assertions)]
 mod simulated;
+#[cfg(target_os = "linux")]
+mod v4l2;
 mod worker;
 
 use std::fmt;
@@ -17,21 +19,35 @@ use serde::{Deserialize, Serialize};
 pub use manager::{CameraEvent, Cameras, Connection};
 
 /// A camera setting the user can change on the Cinematography tab (CT1).
+/// Each camera offers the ones it supports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Setting {
     ShutterSpeed,
     Aperture,
     Iso,
+    Gain,
+    WhiteBalance,
+    Focus,
 }
 
 impl Setting {
-    pub const ALL: [Setting; 3] = [Setting::ShutterSpeed, Setting::Aperture, Setting::Iso];
+    pub const ALL: [Setting; 6] = [
+        Setting::ShutterSpeed,
+        Setting::Aperture,
+        Setting::Iso,
+        Setting::Gain,
+        Setting::WhiteBalance,
+        Setting::Focus,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             Setting::ShutterSpeed => "Shutter speed",
             Setting::Aperture => "Aperture",
             Setting::Iso => "ISO",
+            Setting::Gain => "Gain",
+            Setting::WhiteBalance => "White balance",
+            Setting::Focus => "Focus",
         }
     }
 }
@@ -47,6 +63,12 @@ pub struct CameraSettings {
     pub aperture: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub iso: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub white_balance: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus: Option<String>,
 }
 
 impl CameraSettings {
@@ -67,6 +89,9 @@ impl CameraSettings {
             Setting::ShutterSpeed => &self.shutter_speed,
             Setting::Aperture => &self.aperture,
             Setting::Iso => &self.iso,
+            Setting::Gain => &self.gain,
+            Setting::WhiteBalance => &self.white_balance,
+            Setting::Focus => &self.focus,
         }
     }
 
@@ -75,6 +100,9 @@ impl CameraSettings {
             Setting::ShutterSpeed => &mut self.shutter_speed,
             Setting::Aperture => &mut self.aperture,
             Setting::Iso => &mut self.iso,
+            Setting::Gain => &mut self.gain,
+            Setting::WhiteBalance => &mut self.white_balance,
+            Setting::Focus => &mut self.focus,
         }
     }
 }
@@ -114,7 +142,6 @@ pub struct Capture {
 #[derive(Debug, Clone)]
 pub enum Error {
     /// The camera is gone. The worker stops and the camera must be reopened.
-    #[allow(dead_code, reason = "only hardware backends lose their camera")]
     Disconnected(String),
     /// A request failed but the camera is still usable.
     Failed(String),
@@ -166,6 +193,8 @@ pub trait Backend: Send {
 pub fn backends() -> Vec<Box<dyn Backend>> {
     #[allow(unused_mut)]
     let mut backends: Vec<Box<dyn Backend>> = Vec::new();
+    #[cfg(target_os = "linux")]
+    backends.push(Box::new(v4l2::V4l2Backend));
     #[cfg(debug_assertions)]
     backends.push(Box::new(simulated::SimulatedBackend));
     backends
