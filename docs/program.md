@@ -33,21 +33,54 @@ W7 - Exactly one take is active at a time. The Cinematography window and capture
 P1 - A project is organized as Project > Scene > Shot > Take > Frames.
 P2 - The project picker lists recent projects and has actions to create a new project and open an existing one. It is shown on first launch and when R9 cannot open the last project.
 P3 - Creating a project asks for a name, a save location, and a frame rate (W1). The default frame rate is 12 fps. The frame rate can be changed later in project settings.
-P4 - The project directory contains a single human readable project file (`project.toml`) that holds the scene/shot/take structure, frame order, camera settings, and project settings.
-P5 - Captured images are stored under `frames/` with file names that are unique IDs. They are never renamed or modified after capture. Frame order is defined only by the project file.
-P6 - Every change is saved automatically. There is no save button. The project file is written atomically (write to a temporary file, then rename) so a crash can never leave a partially written project file.
+P4 - The project directory is laid out as follows. Each level of the hierarchy (P1) is a directory containing a human readable config file describing that level.
+
+```
+Project_Name/
+├── project.conf
+└── 0001_SCENE_ONE/
+    ├── scene.conf
+    └── 0001_SHOT_ONE/
+        ├── shot.conf
+        ├── audio/
+        │   └── scene.wav
+        ├── tests/
+        │   ├── 000001.jpg
+        │   └── ...
+        └── 0001_TAKE/
+            ├── take.conf
+            └── frames/
+                ├── preview/
+                │   ├── high_res/
+                │   │   ├── 000001.jpg
+                │   │   └── ...
+                │   └── low_res/
+                │       ├── 000001.jpg
+                │       └── ...
+                └── RAW/
+                    ├── 000001.cr3
+                    └── ...
+```
+
+P5 - Captured images are named with a six digit number (`000001`, `000002`, ...) assigned in capture order within their folder. A number is never reused, even after the image is moved to the trash (P8). Image files are never renamed or modified after capture. All files from one capture share the same number across `high_res/`, `low_res/`, and `RAW/`. Frame order and holds are defined only by `take.conf`, not by file numbers.
+P6 - Every change is saved automatically. There is no save button. Config files are written atomically (write to a temporary file, then rename) so a crash can never leave a partially written config file.
 P7 - A captured image is written and flushed to disk before it appears in the timeline.
-P8 - Removing a frame, take, shot, or scene moves its images to a trash folder inside the project. Images are only permanently deleted when the user empties the project trash and confirms (R3).
-P9 - Generated data such as thumbnails and playback proxies is stored in `.cache/` inside the project. It can be deleted at any time and is rebuilt on demand.
+P8 - Removing a frame, take, shot, or scene moves its images to a `.trash/` folder at the root of the project. Images are only permanently deleted when the user empties the project trash and confirms (R3).
+P9 - Generated data such as thumbnails and playback proxies is stored in `.cache/` at the root of the project. It can be deleted at any time and is rebuilt on demand.
 P10 - Only one instance of the program may have a project open at a time. Opening a project that is already open shows an error instead of opening it twice.
 P11 - Application settings that are not project data (recent projects, window layout, last used camera) are stored in the operating system's standard config directory.
+P12 - Config files are TOML. `project.conf` holds project settings such as the frame rate (P3). `scene.conf` holds the scene name and notes. `shot.conf` holds the shot name, notes, camera settings (CT7), and chosen take (DT6). `take.conf` holds the frame order, holds (AT10), and notes.
+P13 - Scene and shot directories are named `NNNN_NAME`, where `NNNN` is the four digit position starting at `0001` and `NAME` is the user given name in upper case with spaces and characters that are not letters or digits replaced by underscores. Renaming or reordering a scene or shot renames its directory. Take directories are named `NNNN_TAKE`, where `NNNN` is the take number (DT2).
+P14 - `preview/high_res/` holds the full resolution JPEG of each capture. `preview/low_res/` holds the live view frame grabbed at the moment of capture, used by the default animation preview (AT4). `RAW/` holds the camera RAW file when the camera captures RAW (C4) and keeps the camera's extension (for example `.cr3`).
+P15 - Test shots (CT5) are stored in the shot's `tests/` folder, numbered the same way as frames (P5).
+P16 - Audio for a shot is stored in the shot's `audio/` folder.
 
 ### Cameras
 
 C1 - The camera abstraction supports live view, capture, and reading and writing settings. DSLRs and webcams both implement it.
 C2 - Webcams are supported on Linux through V4L2, on Windows through Media Foundation, and on macOS through AVFoundation.
 C3 - Canon DSLRs are supported through the EDSDK on all three platforms. Captured images are transferred directly to the computer, not saved to the camera's memory card.
-C4 - When a DSLR is set to RAW+JPEG, both files are kept. The JPEG is used for display, playback, and export by default. The RAW file is kept alongside it for the user.
+C4 - When a DSLR is set to RAW+JPEG, both files are kept. The JPEG is stored in `preview/high_res/` and used for display, high resolution playback, and export by default. The RAW file is stored in `RAW/` for the user (P14).
 C5 - Only one camera is active at a time. The user picks the camera from a list of detected cameras, and the program reconnects to the last used camera automatically when it is available.
 C6 - Connecting and disconnecting a camera while the program is running is detected and shown in the status bar. A disconnect must not crash the program or affect frames already captured.
 C7 - A failed capture shows an error and leaves the take unchanged. It never adds a blank or partial frame.
@@ -70,7 +103,7 @@ CT1 - DSLR control settings should be shutter speed, aperture, and ISO.
 CT2 - The tab shows a live view of the active camera, filling as much of the available area as possible while keeping the camera's aspect ratio.
 CT3 - Live view can be magnified to check focus.
 CT4 - Optional overlays include a rule of thirds grid, a center mark, and safe area guides for common aspect ratios.
-CT5 - Test shots can be captured from this tab. They are stored in a separate test shot folder for the active shot and are never part of the take's animation.
+CT5 - Test shots can be captured from this tab. They are stored in the active shot's `tests/` folder (P15) and are never part of the take's animation.
 CT6 - Test shots can be viewed full size and compared side by side with live view.
 CT7 - Camera settings are saved per shot. When a take is made active, the saved settings for its shot are applied to the camera, so every take of a shot uses the same exposure.
 CT8 - Camera settings can only be changed on this tab. The Animation tab does not show them and cannot change them, so settings are never bumped by accident while animating.
