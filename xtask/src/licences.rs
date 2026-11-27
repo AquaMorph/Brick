@@ -80,7 +80,10 @@ fn allowed(expression: &str) -> Result<bool, String> {
     // Older crates use `/` as a shorthand for OR.
     let expression = expression.replace('/', " OR ");
     let tokens = tokenize(&expression);
-    let mut parser = Parser { tokens: &tokens, pos: 0 };
+    let mut parser = Parser {
+        tokens: &tokens,
+        pos: 0,
+    };
     let result = parser.or_expr()?;
     if parser.pos != tokens.len() {
         return Err(format!("unexpected `{}`", tokens[parser.pos]));

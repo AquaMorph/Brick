@@ -14,7 +14,12 @@ enum Tab {
 }
 
 impl Tab {
-    const ALL: [Tab; 4] = [Tab::Direct, Tab::Cinematography, Tab::Animation, Tab::Export];
+    const ALL: [Tab; 4] = [
+        Tab::Direct,
+        Tab::Cinematography,
+        Tab::Animation,
+        Tab::Export,
+    ];
 
     fn title(self) -> &'static str {
         match self {
@@ -68,7 +73,11 @@ impl BrickApp {
                 let text = RichText::new(tab.title()).size(15.0);
                 let button = egui::Button::new(text)
                     .min_size(egui::vec2(140.0, 32.0))
-                    .fill(if selected { theme::BRICK } else { theme::SURFACE });
+                    .fill(if selected {
+                        theme::BRICK
+                    } else {
+                        theme::SURFACE
+                    });
                 if ui.add(button).clicked() {
                     self.tab = tab;
                 }
