@@ -31,7 +31,7 @@ Brick is a cross-platform stop motion application for Linux, Windows, and macOS.
 ## Projects
 
 - **P1** — A project is organized as Project > Scene > Shot > Take > Frames.
-- **P2** — The project picker lists recent projects and has actions to create a new project and open an existing one. It is shown on first launch and when R9 cannot open the last project.
+- **P2** — The project picker lists recent projects and has actions to create a new project and open an existing one. It is shown on first launch, when R9 cannot open the last project, and after Close Project (F8).
 - **P3** — Creating a project asks for a name, a save location, and a frame rate (W1). The default frame rate is 12 fps. The frame rate can be changed later in project settings.
 - **P4** — The project directory is laid out as follows. Each level of the hierarchy (P1) is a directory containing a human readable config file describing that level.
 
@@ -74,6 +74,19 @@ Brick is a cross-platform stop motion application for Linux, Windows, and macOS.
 - **P14** — `preview/high_res/` holds the full resolution JPEG of each capture. `preview/low_res/` holds the live view frame grabbed at the moment of capture, used by the default animation preview (AT4). `RAW/` holds the camera RAW file when the camera captures RAW (C4) and keeps the camera's extension (for example `.cr3`).
 - **P15** — Test shots (CT5) are stored in the shot's `tests/` folder, numbered the same way as frames (P5).
 - **P16** — Audio for a shot is stored in the shot's `audio/` folder.
+
+## File Menu
+
+- **F1** — The main window has a File menu. On macOS it lives in the system menu bar; on Linux and Windows it sits in a menu bar above the tab bar (U3). It is available on every tab.
+- **F2** — The File menu contains, in order: New Project, Open Project, Open Recent, Save Project As, Close Project, and Quit.
+- **F3** — New Project shows the create project dialog (P3). On success the new project is opened.
+- **F4** — Open Project shows the operating system's folder picker. The chosen folder must contain a `project.conf`; otherwise an error explains why it cannot be opened (U5). Opening a project that is already open in another instance follows P10.
+- **F5** — Open Recent is a submenu listing the recent projects (P11), most recent first, showing each project's name and path. Projects that no longer exist are shown disabled. The submenu ends with an action to clear the list. Clearing the list never touches project data.
+- **F6** — There is no Save action, because every change is saved automatically (P6). Save Project As asks for a name and location and copies the whole project directory there, including `.trash/` but excluding `.cache/` (P9). The copy is then opened. The original project is left unchanged.
+- **F7** — Save Project As writes to a temporary directory next to the destination and renames it into place when the copy is complete, so a failed or interrupted copy never leaves a partial project at the destination (R13). A copy into a location that already exists is refused.
+- **F8** — Close Project closes the current project and shows the project picker (P2).
+- **F9** — Opening, creating, or closing a project while one is open first closes the current project. No save prompt is shown. Any capture in progress finishes and is written to disk (P7) before the project closes, and playback stops.
+- **F10** — Default shortcuts (Cmd instead of Ctrl on macOS): <kbd>Ctrl</kbd>+<kbd>N</kbd> new project, <kbd>Ctrl</kbd>+<kbd>O</kbd> open project, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> save project as, <kbd>Ctrl</kbd>+<kbd>W</kbd> close project, <kbd>Ctrl</kbd>+<kbd>Q</kbd> quit. These work on every tab, including while a text field has focus.
 
 ## Cameras
 
@@ -152,7 +165,7 @@ Brick is a cross-platform stop motion application for Linux, Windows, and macOS.
 
 - **U1** — The UI design must be that of a professional piece of software. The interface design is flat.
 - **U2** — The only supported theme is black. Color accents should be the color of a brick, dark red.
-- **U3** — The main window has the tab bar at the top and a status bar at the bottom. The status bar shows the active camera and its connection state, the active scene/shot/take, the project frame rate, and the frame count.
+- **U3** — The main window has the File menu (F1) and tab bar at the top and a status bar at the bottom. The status bar shows the active camera and its connection state, the active scene/shot/take, the project frame rate, and the frame count.
 - **U4** — The minimum supported window size is 1280x720. Layouts must scale correctly on high DPI displays.
 - **U5** — Errors are shown inside the program window and never only in a log.
 
