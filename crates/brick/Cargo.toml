@@ -17,6 +17,13 @@ eframe = { version = "0.37", default-features = false, features = [
     "wgpu",
     "x11",
 ] }
+egui_extras = { version = "0.37", default-features = false, features = ["image", "file"] }
+image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.2.3"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -17,6 +17,9 @@ pub const BRICK: Color32 = Color32::from_rgb(150, 42, 30);
 /// A lighter brick red for hovered accents.
 pub const BRICK_HOVER: Color32 = Color32::from_rgb(178, 56, 40);
 
+/// Background of the error banner (U5).
+pub const ERROR_BACKGROUND: Color32 = Color32::from_rgb(58, 16, 12);
+
 /// Installs the Brick theme on the context.
 pub fn apply(ctx: &egui::Context) {
     let mut visuals = Visuals::dark();
@@ -25,6 +28,7 @@ pub fn apply(ctx: &egui::Context) {
     visuals.window_fill = SURFACE;
     visuals.extreme_bg_color = BACKGROUND;
     visuals.faint_bg_color = SURFACE;
+    visuals.text_edit_bg_color = Some(SURFACE);
     visuals.override_text_color = Some(TEXT);
     visuals.hyperlink_color = BRICK_HOVER;
     visuals.selection.bg_fill = BRICK;

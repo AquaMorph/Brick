@@ -2,6 +2,8 @@
 
 use eframe::egui::{self, Align, Layout, RichText};
 
+use crate::direct::DirectTab;
+use crate::project::{self, Project};
 use crate::theme;
 
 /// The stages of a project, in the order the user moves through them (W2).
@@ -42,11 +44,24 @@ impl Tab {
 
 pub struct BrickApp {
     tab: Tab,
+    project: Option<Project>,
+    direct: DirectTab,
+    /// Errors shown at the top of the window until dismissed (U5).
+    errors: Vec<String>,
 }
 
-impl Default for BrickApp {
-    fn default() -> Self {
-        Self { tab: Tab::Direct }
+impl BrickApp {
+    pub fn new(project: project::Result<Option<Project>>) -> Self {
+        let (project, errors) = match project {
+            Ok(project) => (project, Vec::new()),
+            Err(e) => (None, vec![format!("Could not open the project: {e}")]),
+        };
+        Self {
+            tab: Tab::Direct,
+            project,
+            direct: DirectTab::default(),
+            errors,
+        }
     }
 }
 
@@ -58,9 +73,25 @@ impl eframe::App for BrickApp {
 
         egui::Panel::bottom("status_bar")
             .frame(bar_frame())
-            .show(ui, status_bar);
+            .show(ui, |ui| status_bar(ui, self.project.as_ref()));
 
-        egui::CentralPanel::default().show(ui, |ui| self.tab_content(ui));
+        if !self.errors.is_empty() {
+            egui::Panel::top("errors")
+                .frame(
+                    egui::Frame::new()
+                        .fill(theme::ERROR_BACKGROUND)
+                        .inner_margin(egui::Margin::symmetric(12, 8)),
+                )
+                .show(ui, |ui| self.error_list(ui));
+        }
+
+        egui::CentralPanel::no_frame().show(ui, |ui| self.tab_content(ui));
+    }
+
+    fn on_exit(&mut self) {
+        if let Some(project) = &mut self.project {
+            self.direct.commit_edits(project, &mut self.errors);
+        }
     }
 }
 
@@ -85,27 +116,81 @@ impl BrickApp {
         });
     }
 
-    fn tab_content(&self, ui: &mut egui::Ui) {
-        ui.centered_and_justified(|ui| {
-            ui.label(
-                RichText::new(self.tab.summary())
-                    .size(16.0)
-                    .color(theme::TEXT_DIM),
-            );
-        });
+    fn error_list(&mut self, ui: &mut egui::Ui) {
+        let mut dismissed = None;
+        for (index, error) in self.errors.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(error);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.button("Dismiss").clicked() {
+                        dismissed = Some(index);
+                    }
+                });
+            });
+        }
+        if let Some(index) = dismissed {
+            self.errors.remove(index);
+        }
+    }
+
+    fn tab_content(&mut self, ui: &mut egui::Ui) {
+        let Some(project) = &mut self.project else {
+            no_project(ui);
+            return;
+        };
+        match self.tab {
+            Tab::Direct => self.direct.ui(ui, project, &mut self.errors),
+            tab => {
+                ui.centered_and_justified(|ui| {
+                    ui.label(
+                        RichText::new(tab.summary())
+                            .size(16.0)
+                            .color(theme::TEXT_DIM),
+                    );
+                });
+            }
+        }
     }
 }
 
-fn status_bar(ui: &mut egui::Ui) {
+fn no_project(ui: &mut egui::Ui) {
+    ui.vertical_centered(|ui| {
+        ui.add_space(ui.available_height() * 0.4);
+        ui.label(RichText::new("No project open").size(18.0));
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new("Start Brick with a project folder: brick <folder>")
+                .color(theme::TEXT_DIM),
+        );
+    });
+}
+
+fn status_bar(ui: &mut egui::Ui, project: Option<&Project>) {
+    let active = project.and_then(|p| Some((p, p.active()?)));
+    let take = active.and_then(|(p, id)| {
+        let scene = p.scene(id.scene)?;
+        let shot = p.shot(id.shot_id())?;
+        Some((
+            format!("{}  /  {}  /  Take {}", scene.name(), shot.name(), id.take),
+            p.take(id)?.frames().len(),
+        ))
+    });
     ui.horizontal(|ui| {
         status_item(ui, "Camera", "None connected");
         ui.separator();
-        status_item(ui, "Take", "No take active");
+        match &take {
+            Some((label, _)) => status_item(ui, "Take", label),
+            None => status_item(ui, "Take", "No take active"),
+        }
         // Right-to-left layouts place widgets in reverse, so add them last first.
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            status_item_reversed(ui, "Frames", "0");
-            ui.separator();
-            status_item_reversed(ui, "Frame rate", "12 fps");
+            let frames = take.as_ref().map_or(0, |(_, frames)| *frames);
+            status_item_reversed(ui, "Frames", &frames.to_string());
+            if let Some(project) = project {
+                ui.separator();
+                let fps = format!("{} fps", project.frame_rate().fps());
+                status_item_reversed(ui, "Frame rate", &fps);
+            }
         });
     });
 }
