@@ -1,0 +1,27 @@
+# Rust build output
+/target/
+
+# Canon EDSDK (R10, B2): never commit the SDK or its downloads
+/edsdk/
+EDSDK*/
+EDSDK*.zip
+
+# Packaging output (deb, rpm, AppImage, MSI, DMG)
+/dist/
+*.deb
+*.rpm
+*.AppImage
+*.msi
+*.dmg
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
