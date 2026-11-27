@@ -22,6 +22,9 @@ pub use manager::{CameraEvent, Cameras, Connection};
 /// Each camera offers the ones it supports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Setting {
+    /// The size of captured frames, such as `1920x1080`. The camera's native
+    /// resolution by default (C10).
+    Resolution,
     ShutterSpeed,
     Aperture,
     Iso,
@@ -31,7 +34,8 @@ pub enum Setting {
 }
 
 impl Setting {
-    pub const ALL: [Setting; 6] = [
+    pub const ALL: [Setting; 7] = [
+        Setting::Resolution,
         Setting::ShutterSpeed,
         Setting::Aperture,
         Setting::Iso,
@@ -42,6 +46,7 @@ impl Setting {
 
     pub fn label(self) -> &'static str {
         match self {
+            Setting::Resolution => "Resolution",
             Setting::ShutterSpeed => "Shutter speed",
             Setting::Aperture => "Aperture",
             Setting::Iso => "ISO",
@@ -57,6 +62,8 @@ impl Setting {
 /// camera has it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CameraSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shutter_speed: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -86,6 +93,7 @@ impl CameraSettings {
 
     fn slot(&self, setting: Setting) -> &Option<String> {
         match setting {
+            Setting::Resolution => &self.resolution,
             Setting::ShutterSpeed => &self.shutter_speed,
             Setting::Aperture => &self.aperture,
             Setting::Iso => &self.iso,
@@ -97,6 +105,7 @@ impl CameraSettings {
 
     fn slot_mut(&mut self, setting: Setting) -> &mut Option<String> {
         match setting {
+            Setting::Resolution => &mut self.resolution,
             Setting::ShutterSpeed => &mut self.shutter_speed,
             Setting::Aperture => &mut self.aperture,
             Setting::Iso => &mut self.iso,
@@ -105,6 +114,11 @@ impl CameraSettings {
             Setting::Focus => &mut self.focus,
         }
     }
+}
+
+/// The label of a resolution setting.
+pub fn resolution_label(width: u32, height: u32) -> String {
+    format!("{width}x{height}")
 }
 
 /// A setting the camera supports and the values it accepts, in the order the

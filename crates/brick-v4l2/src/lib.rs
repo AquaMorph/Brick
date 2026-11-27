@@ -335,6 +335,19 @@ impl Stream {
         }
     }
 
+    /// Waits up to `timeout` for a frame, then returns the newest one ready,
+    /// dropping older frames still queued. Live view uses this so it never
+    /// falls behind the camera.
+    pub fn latest_frame(&mut self, timeout: Duration) -> io::Result<Vec<u8>> {
+        let mut frame = self.next_frame(timeout)?;
+        while self.ready()? {
+            if let Some(newer) = self.dequeue()? {
+                frame = newer;
+            }
+        }
+        Ok(frame)
+    }
+
     /// Takes the next filled buffer, copies it out, and hands the buffer back
     /// to the driver. `None` if the frame was damaged.
     fn dequeue(&mut self) -> io::Result<Option<Vec<u8>>> {
@@ -400,6 +413,37 @@ impl Drop for Stream {
     }
 }
 
+/// Converts a packed YUYV 4:2:2 frame (BT.601) to 8 bit RGB. `None` if
+/// `data` is too short for the format.
+pub fn yuyv_to_rgb(data: &[u8], format: PixFormat) -> Option<Vec<u8>> {
+    let (width, height) = (format.width as usize, format.height as usize);
+    let stride = (format.bytes_per_line as usize).max(width * 2);
+    if height == 0 || data.len() < stride * (height - 1) + width * 2 {
+        return None;
+    }
+    let mut rgb = Vec::with_capacity(width * height * 3);
+    for row in data.chunks(stride).take(height) {
+        for pair in row[..width * 2].chunks_exact(4) {
+            let (y0, u, y1, v) = (pair[0], pair[1], pair[2], pair[3]);
+            rgb.extend_from_slice(&yuv(y0, u, v));
+            rgb.extend_from_slice(&yuv(y1, u, v));
+        }
+    }
+    Some(rgb)
+}
+
+fn yuv(y: u8, u: u8, v: u8) -> [u8; 3] {
+    let c = (f32::from(y) - 16.0) * 1.164;
+    let d = f32::from(u) - 128.0;
+    let e = f32::from(v) - 128.0;
+    let clamp = |x: f32| x.round().clamp(0.0, 255.0) as u8;
+    [
+        clamp(c + 1.596 * e),
+        clamp(c - 0.392 * d - 0.813 * e),
+        clamp(c + 2.017 * d),
+    ]
+}
+
 /// Whether an error means the device is gone.
 pub fn is_disconnected(error: &io::Error) -> bool {
     matches!(
@@ -422,6 +466,21 @@ mod tests {
         // V4L2_PIX_FMT_MJPEG is v4l2_fourcc('M', 'J', 'P', 'G').
         assert_eq!(FourCc::MJPG.to_u32(), 0x4750_4a4d);
         assert_eq!(FourCc::from_u32(0x5659_5559), FourCc::YUYV);
+    }
+
+    #[test]
+    fn yuyv_grey_stays_grey() {
+        let format = PixFormat {
+            width: 2,
+            height: 1,
+            fourcc: FourCc::YUYV,
+            bytes_per_line: 4,
+        };
+        assert_eq!(
+            yuyv_to_rgb(&[126, 128, 126, 128], format),
+            Some(vec![128; 6])
+        );
+        assert_eq!(yuyv_to_rgb(&[0; 3], format), None);
     }
 
     #[test]

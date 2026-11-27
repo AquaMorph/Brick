@@ -11,12 +11,13 @@ use std::time::{Duration, Instant};
 
 use image::codecs::jpeg::JpegEncoder;
 
-use super::Setting;
 use super::{Backend, Camera, CameraInfo, CameraSettings, Capture, Control, Error, Frame, Result};
+use super::{Setting, resolution_label};
 
 const ID: &str = "simulated";
 const LIVE_SIZE: (u32, u32) = (960, 640);
-const CAPTURE_SIZE: (u32, u32) = (2400, 1600);
+/// Capture sizes, native first (C10).
+const RESOLUTIONS: [(u32, u32); 3] = [(2400, 1600), (1800, 1200), (1200, 800)];
 const LIVE_INTERVAL: Duration = Duration::from_millis(33);
 /// How long a capture takes, like the shutter and transfer of a real camera.
 const CAPTURE_TIME: Duration = Duration::from_millis(400);
@@ -74,6 +75,7 @@ impl Backend for SimulatedBackend {
 }
 
 struct SimulatedCamera {
+    resolution: usize,
     shutter: usize,
     aperture: usize,
     iso: usize,
@@ -86,6 +88,7 @@ struct SimulatedCamera {
 impl SimulatedCamera {
     fn new() -> Self {
         Self {
+            resolution: 0,
             shutter: 6,
             aperture: 3,
             iso: 2,
@@ -116,6 +119,13 @@ impl Camera for SimulatedCamera {
     fn controls(&self) -> Vec<Control> {
         vec![
             Control {
+                setting: Setting::Resolution,
+                choices: RESOLUTIONS
+                    .iter()
+                    .map(|(w, h)| resolution_label(*w, *h))
+                    .collect(),
+            },
+            Control {
                 setting: Setting::ShutterSpeed,
                 choices: choices(&SHUTTER_SPEEDS),
             },
@@ -131,7 +141,9 @@ impl Camera for SimulatedCamera {
     }
 
     fn settings(&self) -> CameraSettings {
+        let (width, height) = RESOLUTIONS[self.resolution];
         CameraSettings {
+            resolution: Some(resolution_label(width, height)),
             shutter_speed: Some(SHUTTER_SPEEDS[self.shutter].0.into()),
             aperture: Some(APERTURES[self.aperture].0.into()),
             iso: Some(ISOS[self.iso].0.into()),
@@ -140,21 +152,31 @@ impl Camera for SimulatedCamera {
     }
 
     fn set(&mut self, setting: Setting, value: &str) -> Result<()> {
+        let unsupported = || {
+            Error::Failed(format!(
+                "The simulated camera does not support {} {value}.",
+                setting.label()
+            ))
+        };
+        if setting == Setting::Resolution {
+            self.resolution = RESOLUTIONS
+                .iter()
+                .position(|(w, h)| resolution_label(*w, *h) == value)
+                .ok_or_else(unsupported)?;
+            return Ok(());
+        }
         let (table, slot): (&[(&str, f32)], &mut usize) = match setting {
             Setting::ShutterSpeed => (&SHUTTER_SPEEDS, &mut self.shutter),
             Setting::Aperture => (&APERTURES, &mut self.aperture),
             Setting::Iso => (&ISOS, &mut self.iso),
-            Setting::Gain | Setting::WhiteBalance | Setting::Focus => (&[], &mut self.iso),
+            Setting::Resolution | Setting::Gain | Setting::WhiteBalance | Setting::Focus => {
+                (&[], &mut self.iso)
+            }
         };
         let index = table
             .iter()
             .position(|(name, _)| *name == value)
-            .ok_or_else(|| {
-                Error::Failed(format!(
-                    "The simulated camera does not support {} {value}.",
-                    setting.label()
-                ))
-            })?;
+            .ok_or_else(unsupported)?;
         *slot = index;
         Ok(())
     }
@@ -188,15 +210,14 @@ impl Camera for SimulatedCamera {
 
     fn capture(&mut self) -> Result<Capture> {
         thread::sleep(CAPTURE_TIME);
-        let (width, height) = CAPTURE_SIZE;
+        let (width, height) = RESOLUTIONS[self.resolution];
         let rgba = render(width, height, self.gain(), Some(self.time()));
-        let rgb: Vec<u8> = rgba
-            .chunks_exact(4)
-            .flat_map(|p| [p[0], p[1], p[2]])
-            .collect();
+        let rgb = image::RgbaImage::from_raw(width, height, rgba)
+            .map(|image| image::DynamicImage::ImageRgba8(image).into_rgb8())
+            .ok_or_else(|| Error::Failed("The simulated image has the wrong size.".into()))?;
         let mut jpeg = Vec::new();
         JpegEncoder::new_with_quality(Cursor::new(&mut jpeg), 90)
-            .encode(&rgb, width, height, image::ExtendedColorType::Rgb8)
+            .encode_image(&rgb)
             .map_err(|e| Error::Failed(format!("Could not encode the image: {e}")))?;
         Ok(Capture { jpeg, raw: None })
     }
@@ -310,6 +331,10 @@ mod tests {
         let mut camera = SimulatedCamera::new();
         let capture = camera.capture().unwrap();
         let image = image::load_from_memory(&capture.jpeg).unwrap();
-        assert_eq!((image.width(), image.height()), CAPTURE_SIZE);
+        assert_eq!((image.width(), image.height()), RESOLUTIONS[0]);
+        camera.set(Setting::Resolution, "1200x800").unwrap();
+        let capture = camera.capture().unwrap();
+        let image = image::load_from_memory(&capture.jpeg).unwrap();
+        assert_eq!((image.width(), image.height()), (1200, 800));
     }
 }

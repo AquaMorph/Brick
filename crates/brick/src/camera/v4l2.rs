@@ -12,8 +12,8 @@ use std::time::Duration;
 use brick_v4l2::{self as v4l2, Device, FourCc, PixFormat, Stream};
 use image::codecs::jpeg::JpegEncoder;
 
-use super::Setting;
 use super::{Backend, Camera, CameraInfo, CameraSettings, Capture, Control, Error, Frame, Result};
+use super::{Setting, resolution_label};
 
 const ID_PREFIX: &str = "v4l2:";
 const BUFFERS: u32 = 4;
@@ -94,6 +94,8 @@ struct WebcamControl {
 struct Webcam {
     device: Device,
     format: PixFormat,
+    /// The frame sizes the webcam offers, largest (native) first (C10).
+    sizes: Vec<(u32, u32)>,
     stream: Option<Stream>,
     controls: Vec<WebcamControl>,
 }
@@ -111,11 +113,10 @@ impl Webcam {
                     "the webcam sends no picture format Brick can read",
                 )
             })?;
-        let (width, height) = device
-            .frame_sizes(fourcc)?
-            .into_iter()
-            .max_by_key(|(w, h)| u64::from(*w) * u64::from(*h))
-            .unwrap_or((1280, 720));
+        let mut sizes = device.frame_sizes(fourcc)?;
+        sizes.sort_by_key(|(w, h)| std::cmp::Reverse(u64::from(*w) * u64::from(*h)));
+        sizes.dedup();
+        let (width, height) = sizes.first().copied().unwrap_or((1280, 720));
         let format = device.set_format(fourcc, width, height)?;
         if format.fourcc != fourcc {
             return Err(io::Error::new(
@@ -168,6 +169,7 @@ impl Webcam {
         let mut webcam = Self {
             device,
             format,
+            sizes,
             stream: None,
             controls,
         };
@@ -218,9 +220,10 @@ impl Webcam {
         for _ in 0..SETTLE_FRAMES {
             data = stream.next_frame(FRAME_TIMEOUT).ok()?;
         }
-        let rgb = self.decode(&data).ok()?;
-        let sum: u64 = rgb.as_raw().iter().map(|v| u64::from(*v)).sum();
-        Some(sum as f64 / rgb.as_raw().len().max(1) as f64)
+        // A small copy is plenty to tell a black frame from a picture.
+        let small = self.decode(&data).ok()?.thumbnail(64, 64).into_rgb8();
+        let sum: u64 = small.as_raw().iter().map(|v| u64::from(*v)).sum();
+        Some(sum as f64 / small.as_raw().len().max(1) as f64)
     }
 
     fn start(&mut self) -> Result<&mut Stream> {
@@ -236,29 +239,75 @@ impl Webcam {
             .ok_or_else(|| Error::Failed("The webcam is not streaming.".into()))
     }
 
-    fn decode(&self, data: &[u8]) -> Result<image::RgbImage> {
+    fn decode(&self, data: &[u8]) -> Result<image::DynamicImage> {
+        let unreadable = || Error::Failed("The webcam sent an unreadable frame.".into());
         match self.format.fourcc {
             FourCc::MJPG => image::load_from_memory_with_format(data, image::ImageFormat::Jpeg)
-                .map(|image| image.to_rgb8())
                 .map_err(|e| Error::Failed(format!("The webcam sent an unreadable frame: {e}"))),
-            _ => yuyv_to_rgb(data, self.format),
+            _ => {
+                let rgb = v4l2::yuyv_to_rgb(data, self.format).ok_or_else(unreadable)?;
+                image::RgbImage::from_raw(self.format.width, self.format.height, rgb)
+                    .map(image::DynamicImage::ImageRgb8)
+                    .ok_or_else(unreadable)
+            }
         }
+    }
+
+    /// Changes the frame size. The stream has to stop while the format
+    /// changes, and is restarted if it was running.
+    fn set_resolution(&mut self, value: &str) -> Result<()> {
+        let (width, height) = self
+            .sizes
+            .iter()
+            .copied()
+            .find(|(w, h)| resolution_label(*w, *h) == value)
+            .ok_or_else(|| {
+                Error::Failed(format!(
+                    "This webcam does not support the resolution {value}."
+                ))
+            })?;
+        let streaming = self.stream.take().is_some();
+        let format = self
+            .device
+            .set_format(self.format.fourcc, width, height)
+            .map_err(|e| error(&e, "The webcam refused the resolution"))?;
+        self.format = format;
+        if streaming {
+            self.start()?;
+        }
+        if (format.width, format.height) != (width, height) {
+            return Err(Error::Failed(format!(
+                "The webcam chose {} instead of {value}.",
+                resolution_label(format.width, format.height)
+            )));
+        }
+        Ok(())
     }
 }
 
 impl Camera for Webcam {
     fn controls(&self) -> Vec<Control> {
-        self.controls
-            .iter()
-            .map(|c| Control {
-                setting: c.setting,
-                choices: c.choices.iter().map(|(label, _)| label.clone()).collect(),
-            })
-            .collect()
+        let resolution = Control {
+            setting: Setting::Resolution,
+            choices: self
+                .sizes
+                .iter()
+                .map(|(w, h)| resolution_label(*w, *h))
+                .collect(),
+        };
+        let others = self.controls.iter().map(|c| Control {
+            setting: c.setting,
+            choices: c.choices.iter().map(|(label, _)| label.clone()).collect(),
+        });
+        std::iter::once(resolution).chain(others).collect()
     }
 
     fn settings(&self) -> CameraSettings {
         let mut settings = CameraSettings::default();
+        settings.set(
+            Setting::Resolution,
+            Some(resolution_label(self.format.width, self.format.height)),
+        );
         for control in &self.controls {
             let Ok(value) = self.device.control(control.id) else {
                 continue;
@@ -273,6 +322,9 @@ impl Camera for Webcam {
     }
 
     fn set(&mut self, setting: Setting, value: &str) -> Result<()> {
+        if setting == Setting::Resolution {
+            return self.set_resolution(value);
+        }
         let (id, raw) = self
             .controls
             .iter()
@@ -307,16 +359,15 @@ impl Camera for Webcam {
             .stream
             .as_mut()
             .ok_or_else(|| Error::Failed("Live view is off.".into()))?;
+        // Older queued frames are dropped so live view never lags (CT2).
         let data = stream
-            .next_frame(FRAME_TIMEOUT)
+            .latest_frame(FRAME_TIMEOUT)
             .map_err(|e| error(&e, "No live view frame"))?;
-        let rgb = self.decode(&data)?;
-        let (width, height) = rgb.dimensions();
-        let rgba = rgb.pixels().flat_map(|p| [p[0], p[1], p[2], 255]).collect();
+        let rgba = self.decode(&data)?.into_rgba8();
         Ok(Frame {
-            width,
-            height,
-            rgba,
+            width: rgba.width(),
+            height: rgba.height(),
+            rgba: rgba.into_raw(),
         })
     }
 
@@ -348,7 +399,7 @@ impl Camera for Webcam {
             self.stream = None;
         }
 
-        let rgb = self.decode(&data)?;
+        let rgb = self.decode(&data)?.into_rgb8();
         // A motion JPEG frame is a complete JPEG when it carries its Huffman
         // tables, so it can be kept as the camera sent it.
         let jpeg = if self.format.fourcc == FourCc::MJPG && has_huffman_tables(&data) {
@@ -426,37 +477,6 @@ fn has_huffman_tables(jpeg: &[u8]) -> bool {
     jpeg.windows(2).any(|w| w == [0xff, 0xc4])
 }
 
-/// Converts packed YUYV 4:2:2 (BT.601) to RGB.
-fn yuyv_to_rgb(data: &[u8], format: PixFormat) -> Result<image::RgbImage> {
-    let (width, height) = (format.width as usize, format.height as usize);
-    let stride = (format.bytes_per_line as usize).max(width * 2);
-    if data.len() < stride * (height - 1) + width * 2 {
-        return Err(Error::Failed("The webcam sent a short frame.".into()));
-    }
-    let mut rgb = Vec::with_capacity(width * height * 3);
-    for row in data.chunks(stride).take(height) {
-        for pair in row[..width * 2].chunks_exact(4) {
-            let (y0, u, y1, v) = (pair[0], pair[1], pair[2], pair[3]);
-            rgb.extend_from_slice(&yuv(y0, u, v));
-            rgb.extend_from_slice(&yuv(y1, u, v));
-        }
-    }
-    image::RgbImage::from_raw(format.width, format.height, rgb)
-        .ok_or_else(|| Error::Failed("The webcam sent a short frame.".into()))
-}
-
-fn yuv(y: u8, u: u8, v: u8) -> [u8; 3] {
-    let c = (f32::from(y) - 16.0) * 1.164;
-    let d = f32::from(u) - 128.0;
-    let e = f32::from(v) - 128.0;
-    let clamp = |x: f32| x.round().clamp(0.0, 255.0) as u8;
-    [
-        clamp(c + 1.596 * e),
-        clamp(c - 0.392 * d - 0.813 * e),
-        clamp(c + 2.017 * d),
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,17 +530,5 @@ mod tests {
             "Laptop Camera"
         );
         assert_eq!(display_name("C920: HD Pro"), "C920: HD Pro");
-    }
-
-    #[test]
-    fn yuyv_grey_stays_grey() {
-        let format = PixFormat {
-            width: 2,
-            height: 1,
-            fourcc: FourCc::YUYV,
-            bytes_per_line: 4,
-        };
-        let rgb = yuyv_to_rgb(&[126, 128, 126, 128], format).unwrap();
-        assert_eq!(rgb.get_pixel(0, 0).0, [128, 128, 128]);
     }
 }

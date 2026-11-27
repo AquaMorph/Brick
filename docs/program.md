@@ -99,6 +99,7 @@ Brick is a cross-platform stop motion application for Linux, Windows, and macOS.
 - **C7** — A failed capture shows an error and leaves the take unchanged. It never adds a blank or partial frame.
 - **C8** — For webcams, auto exposure, auto white balance, and auto focus are turned off by default where the device allows it, to prevent flicker between frames.
 - **C9** — A simulated camera is available in development builds so the program can be developed and tested without hardware.
+- **C10** — Cameras capture at their native (largest) resolution by default. The Cinematography tab offers a drop down of the lower resolutions the camera supports. The resolution is saved per shot with the other camera settings (CT7).
 
 ## Direct Tab
 
@@ -112,8 +113,8 @@ Brick is a cross-platform stop motion application for Linux, Windows, and macOS.
 
 ## Cinematography Tab
 
-- **CT1** — DSLR control settings should be shutter speed, aperture, and ISO. Webcam settings are exposure time (shown as a shutter speed), gain, white balance, and focus, where the device supports them. A webcam whose manual exposure only gives black frames keeps auto exposure and does not offer exposure time (C8).
-- **CT2** — The tab shows a live view of the active camera, filling as much of the available area as possible while keeping the camera's aspect ratio.
+- **CT1** — DSLR control settings should be resolution (C10), shutter speed, aperture, and ISO. Webcam settings are resolution (C10), exposure time (shown as a shutter speed), gain, white balance, and focus, where the device supports them. A webcam whose manual exposure only gives black frames keeps auto exposure and does not offer exposure time (C8).
+- **CT2** — The tab shows a live view of the active camera, filling as much of the available area as possible while keeping the camera's aspect ratio. Live view always shows the newest frame from the camera; older frames are dropped so it never falls behind.
 - **CT3** — Live view can be magnified to check focus.
 - **CT4** — Optional overlays include a rule of thirds grid, a center mark, and safe area guides for common aspect ratios.
 - **CT5** — Test shots can be captured from this tab. They are stored in the active shot's `tests/` folder (P15) and are never part of the take's animation.
