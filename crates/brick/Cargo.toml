@@ -1,0 +1,22 @@
+[package]
+name = "brick"
+description = "Stop motion animation for DSLRs and webcams"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+eframe = { version = "0.37", default-features = false, features = [
+    "accesskit",
+    "clipboard",
+    "default_fonts",
+    "wayland",
+    "wgpu",
+    "x11",
+] }
+
+[lints]
+workspace = true
