@@ -423,8 +423,7 @@ pub fn yuyv_to_rgb(data: &[u8], format: PixFormat) -> Option<Vec<u8>> {
     }
     let mut rgb = Vec::with_capacity(width * height * 3);
     for row in data.chunks(stride).take(height) {
-        for pair in row[..width * 2].chunks_exact(4) {
-            let (y0, u, y1, v) = (pair[0], pair[1], pair[2], pair[3]);
+        for &[y0, u, y1, v] in row[..width * 2].as_chunks::<4>().0 {
             rgb.extend_from_slice(&yuv(y0, u, v));
             rgb.extend_from_slice(&yuv(y1, u, v));
         }

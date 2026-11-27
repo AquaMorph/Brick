@@ -204,8 +204,10 @@ pub trait Backend: Send {
 }
 
 /// Every backend compiled into this build.
+// Each backend is compiled in conditionally, so a `vec![]` literal cannot list
+// them.
+#[allow(unused_mut, clippy::vec_init_then_push)]
 pub fn backends() -> Vec<Box<dyn Backend>> {
-    #[allow(unused_mut)]
     let mut backends: Vec<Box<dyn Backend>> = Vec::new();
     #[cfg(target_os = "linux")]
     backends.push(Box::new(v4l2::V4l2Backend));

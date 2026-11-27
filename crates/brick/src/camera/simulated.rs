@@ -246,7 +246,11 @@ fn scene(u: f32, v: f32, aspect: f32) -> [f32; 3] {
     let r = (dx * dx + dy * dy).sqrt();
     if r < 0.13 {
         let wedge = ((dy.atan2(dx) / std::f32::consts::TAU + 0.5) * 48.0) as u32;
-        return if wedge % 2 == 0 { [0.03; 3] } else { [0.8; 3] };
+        return if wedge.is_multiple_of(2) {
+            [0.03; 3]
+        } else {
+            [0.8; 3]
+        };
     }
     if r < 0.135 {
         return [0.03; 3];
@@ -261,7 +265,7 @@ fn scene(u: f32, v: f32, aspect: f32) -> [f32; 3] {
     for (left, right, top, color) in blocks {
         if (left..right).contains(&u) && (top..0.70).contains(&v) {
             let row = ((v - top) / 0.04) as u32;
-            let offset = if row % 2 == 0 { 0.0 } else { 0.03 };
+            let offset = if row.is_multiple_of(2) { 0.0 } else { 0.03 };
             let mortar = (v - top) % 0.04 < 0.004 || (u - left + offset) % 0.06 < 0.004;
             return if mortar { [0.25, 0.24, 0.22] } else { color };
         }
@@ -269,7 +273,7 @@ fn scene(u: f32, v: f32, aspect: f32) -> [f32; 3] {
 
     if v >= 0.70 {
         // A checkered table top.
-        let check = ((u * 16.0) as u32 + ((v - 0.70) * 24.0) as u32) % 2 == 0;
+        let check = ((u * 16.0) as u32 + ((v - 0.70) * 24.0) as u32).is_multiple_of(2);
         return if check {
             [0.36, 0.22, 0.12]
         } else {
