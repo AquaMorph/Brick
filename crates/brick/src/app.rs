@@ -471,8 +471,8 @@ fn status_bar(ui: &mut egui::Ui, project: Option<&Project>) {
         status_item(ui, "Camera", "None connected");
         ui.separator();
         match &take {
-            Some((label, _)) => status_item(ui, "Take", label),
-            None => status_item(ui, "Take", "No take active"),
+            Some((label, _)) => status_item(ui, "Active", label),
+            None => status_item(ui, "Active", "No take active"),
         }
         // Right-to-left layouts place widgets in reverse, so add them last first.
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
