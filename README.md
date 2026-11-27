@@ -10,7 +10,7 @@ Requires Rust 1.95 or newer.
 cargo run --package brick
 ```
 
-Brick builds without the EDSDK; DSLR support is compiled out and only webcams are available.
+Brick builds without the EDSDK; DSLR support is compiled out and only webcams are available. To build with Canon DSLR support, install the EDSDK as described in [docs/edsdk.md](docs/edsdk.md).
 
 ## License
 
