@@ -14,6 +14,10 @@ The project folder is opened, or a new project is created there if it does not h
 
 Brick builds without the EDSDK; DSLR support is compiled out and only webcams are available. To build with Canon DSLR support, install the EDSDK as described in [docs/edsdk.md](docs/edsdk.md).
 
+## Contributing
+
+Brick is under active development and is not accepting community contributions right now. Pull requests will be closed without review. Bug reports are welcome through [GitHub issues](https://github.com/AquaMorph/Brick/issues). See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
