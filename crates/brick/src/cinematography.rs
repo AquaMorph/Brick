@@ -118,7 +118,9 @@ pub struct CinematographyTab {
     reference: Option<i32>,
     /// The shot and camera the reference was taken with.
     reference_for: Option<(ShotKey, String)>,
-    lock: Lock,
+    /// The exposure setting held still while the other two trade (CT10).
+    /// Nothing is locked by default.
+    lock: Option<Setting>,
     drag: Option<Drag>,
 }
 
@@ -134,15 +136,6 @@ struct Drag {
     /// How far it can go darker and brighter before it, or the partner,
     /// runs out of values, in points.
     reach: (f32, f32),
-}
-
-/// The exposure setting held still while the other two trade (CT10).
-struct Lock(Option<Setting>);
-
-impl Default for Lock {
-    fn default() -> Self {
-        Self(Some(Setting::Iso))
-    }
 }
 
 impl CinematographyTab {
@@ -678,7 +671,7 @@ impl CinematographyTab {
             return;
         }
         let lock = if triangle.is_complete() {
-            self.lock.0
+            self.lock
         } else {
             None
         };
@@ -800,7 +793,7 @@ impl CinematographyTab {
                         }
                     }
                     if show_locks && lock_button(ui, locked, setting).clicked() {
-                        self.lock.0 = if locked { None } else { Some(setting) };
+                        self.lock = if locked { None } else { Some(setting) };
                         self.drag = None;
                     }
                 });
@@ -848,30 +841,6 @@ impl CinematographyTab {
                 Stroke::NONE,
             ));
         }
-
-        ui.add_space(4.0);
-        let hint = match lock {
-            Some(locked) => {
-                let mut names = scales
-                    .iter()
-                    .map(|s| s.setting)
-                    .filter(|s| *s != locked)
-                    .map(short_label);
-                let first = names.next().unwrap_or_default();
-                let second = names.next().unwrap_or_default();
-                let second = if second == "ISO" {
-                    second.to_owned()
-                } else {
-                    second.to_lowercase()
-                };
-                format!("{first} and {second} trade at the same exposure.")
-            }
-            None if show_locks => {
-                "Drag between two rulers, or lock one, to trade at the same exposure.".to_owned()
-            }
-            None => "Drag the ruler to change the exposure.".to_owned(),
-        };
-        ui.label(dim(hint).size(11.0));
     }
 }
 
@@ -1000,15 +969,6 @@ fn in_sentence(setting: Setting) -> String {
     match setting {
         Setting::Iso => "ISO".to_owned(),
         other => other.label().to_lowercase(),
-    }
-}
-
-fn short_label(setting: Setting) -> &'static str {
-    match setting {
-        Setting::ShutterSpeed => "Shutter",
-        Setting::Aperture => "Aperture",
-        Setting::Iso => "ISO",
-        other => other.label(),
     }
 }
 
