@@ -1,0 +1,59 @@
+[package]
+name = "brick-avfoundation"
+description = "Safe access to AVFoundation video capture devices for Brick"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# R4: this crate holds the unsafe FFI code the rest of Brick is not allowed to
+# contain. Every unsafe block must say why it is sound.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = { version = "0.6.2", default-features = false, features = ["std"] }
+dispatch2 = { version = "0.3.1", default-features = false, features = ["std", "block2", "objc2"] }
+objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "dispatch2",
+    "objc2-core-media",
+    "AVCaptureDevice",
+    "AVCaptureInput",
+    "AVCaptureOutputBase",
+    "AVCaptureSession",
+    "AVCaptureVideoDataOutput",
+    "AVMediaFormat",
+] }
+objc2-core-media = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "objc2-core-video",
+    "CMBase",
+    "CMFormatDescription",
+    "CMSampleBuffer",
+] }
+objc2-core-video = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CVBase",
+    "CVBuffer",
+    "CVImageBuffer",
+    "CVPixelBuffer",
+    "CVReturn",
+] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSDictionary",
+    "NSError",
+    "NSObject",
+    "NSString",
+    "NSValue",
+    "objc2-core-foundation",
+] }

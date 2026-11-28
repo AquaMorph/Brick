@@ -5,6 +5,8 @@
 //! settings. Cameras are only ever driven from their own worker thread
 //! ([`worker`]), so a slow camera never blocks the UI (AT12).
 
+#[cfg(target_os = "macos")]
+mod avfoundation;
 pub mod exposure;
 pub mod manager;
 #[cfg(debug_assertions)]
@@ -158,10 +160,10 @@ pub struct Capture {
 pub enum Error {
     /// The camera is gone. The worker stops and the camera must be reopened.
     #[cfg_attr(
-        all(not(target_os = "linux"), not(test)),
+        all(not(target_os = "linux"), not(target_os = "macos"), not(test)),
         expect(
             dead_code,
-            reason = "only the V4L2 backend can lose its camera until the other platform backends exist"
+            reason = "only the V4L2 and AVFoundation backends can lose their camera until the Windows backend exists"
         )
     )]
     Disconnected(String),
@@ -219,6 +221,8 @@ pub fn backends() -> Vec<Box<dyn Backend>> {
     let mut backends: Vec<Box<dyn Backend>> = Vec::new();
     #[cfg(target_os = "linux")]
     backends.push(Box::new(v4l2::V4l2Backend));
+    #[cfg(target_os = "macos")]
+    backends.push(Box::new(avfoundation::AvFoundationBackend));
     #[cfg(debug_assertions)]
     backends.push(Box::new(simulated::SimulatedBackend));
     backends

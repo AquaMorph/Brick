@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/brick", "crates/brick-v4l2", "xtask"]
+members = ["crates/brick", "crates/brick-avfoundation", "crates/brick-v4l2", "xtask"]
 
 [workspace.package]
 version = "0.1.0"

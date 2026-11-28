@@ -174,13 +174,18 @@ objc2	0.5.3	MIT
 objc2	0.6.5	MIT
 objc2-app-kit	0.2.2	MIT
 objc2-app-kit	0.3.2	Zlib OR Apache-2.0 OR MIT
+objc2-av-foundation	0.3.2	Zlib OR Apache-2.0 OR MIT
 objc2-cloud-kit	0.2.2	MIT
 objc2-contacts	0.2.2	MIT
+objc2-core-audio	0.3.2	Zlib OR Apache-2.0 OR MIT
+objc2-core-audio-types	0.3.2	Zlib OR Apache-2.0 OR MIT
 objc2-core-data	0.2.2	MIT
 objc2-core-foundation	0.3.2	Zlib OR Apache-2.0 OR MIT
 objc2-core-graphics	0.3.2	Zlib OR Apache-2.0 OR MIT
 objc2-core-image	0.2.2	MIT
 objc2-core-location	0.2.2	MIT
+objc2-core-media	0.3.2	Zlib OR Apache-2.0 OR MIT
+objc2-core-video	0.3.2	Zlib OR Apache-2.0 OR MIT
 objc2-encode	4.1.0	MIT
 objc2-foundation	0.2.2	MIT
 objc2-foundation	0.3.2	MIT
