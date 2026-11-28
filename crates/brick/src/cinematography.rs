@@ -545,16 +545,8 @@ impl CinematographyTab {
         ui.label(section_title("Camera settings"));
         ui.add_space(4.0);
         let active = project.active().map(|take| take.shot_id());
-        let active_shot = active.and_then(|id| Some((project.scene(id.scene)?, project.shot(id)?)));
-        match active_shot {
-            Some((scene, shot)) => {
-                ui.label(RichText::new(format!("{}  /  {}", scene.name(), shot.name())).strong());
-            }
-            None => {
-                ui.label(dim("No take active"));
-            }
-        }
-        ui.add_space(8.0);
+        let active_shot = active.and_then(|id| project.shot(id));
+        ui.add_space(4.0);
 
         let usable = cameras.is_connected() && active_shot.is_some();
         let settings = cameras.settings();
@@ -562,7 +554,7 @@ impl CinematographyTab {
 
         // The reference starts as the shot's exposure with this camera.
         let context = active_shot
-            .map(|(_, shot)| shot.key())
+            .map(|shot| shot.key())
             .zip(connected_info(cameras.connection()).map(|info| info.id.clone()));
         if self.reference_for != context {
             self.reference_for = context;
