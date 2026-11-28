@@ -22,6 +22,7 @@ cargo xtask licences --check   # R6
 ```
 
 - Warnings are errors in CI, so fix every compiler and clippy warning.
+- These checks only cover the host platform. CI also builds Windows and macOS, where platform backends such as V4L2 are compiled out. Code that is only used from `#[cfg(target_os = ...)]` code becomes dead code on the other platforms and fails the build, so check every item a platform gated module uses.
 - If dependencies change, also confirm the minimum supported Rust version (`rust-version` in `Cargo.toml`) still builds: `cargo +<rust-version> check --workspace --all-targets --locked`.
 - New behavior needs tests. Use the simulated camera (C9) to test camera paths without hardware.
 - Code in `crates/brick-v4l2` must document every `unsafe` block (`clippy::undocumented_unsafe_blocks`, R4).

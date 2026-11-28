@@ -156,6 +156,13 @@ pub struct Capture {
 #[derive(Debug, Clone)]
 pub enum Error {
     /// The camera is gone. The worker stops and the camera must be reopened.
+    #[cfg_attr(
+        all(not(target_os = "linux"), not(test)),
+        expect(
+            dead_code,
+            reason = "only the V4L2 backend can lose its camera until the other platform backends exist"
+        )
+    )]
     Disconnected(String),
     /// A request failed but the camera is still usable.
     Failed(String),
