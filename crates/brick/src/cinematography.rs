@@ -1,5 +1,5 @@
 //! The Cinematography tab: live view, camera settings for the active shot,
-//! and test shots (W4, CT1-CT10).
+//! and test shots (W4, CT1-CT11).
 
 use eframe::egui::{
     self, Align, Align2, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Stroke, Vec2,
@@ -9,7 +9,7 @@ use crate::camera::exposure::{Change, Scale, Triangle, format_stops, partner, th
 use crate::camera::{CameraInfo, CameraSettings, Cameras, Connection, Control, Setting};
 use crate::direct::{dim, panel_frame, section_title};
 use crate::images::{Image, Images};
-use crate::project::{Project, ShotId, ShotKey};
+use crate::project::{Project, ShotId, ShotKey, TestShot};
 use crate::theme;
 
 /// Magnification steps for checking focus (CT3).
@@ -99,6 +99,9 @@ pub enum Action {
     Connect(String),
     /// Change a camera setting of the active shot (CT7).
     Set(Setting, String),
+    /// Make the settings a test shot was taken with the active shot's
+    /// settings (CT11).
+    UseTestSettings(u32),
 }
 
 #[derive(Default)]
@@ -164,7 +167,11 @@ impl CinematographyTab {
         let tests = shot
             .and_then(|id| project.shot(id))
             .map_or(&[][..], |s| s.tests());
-        if self.view.test().is_some_and(|n| !tests.contains(&n)) {
+        if self
+            .view
+            .test()
+            .is_some_and(|n| !tests.iter().any(|t| t.number() == n))
+        {
             self.view = View::Live;
         }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) && !ui.ctx().egui_wants_keyboard_input() {
@@ -427,7 +434,7 @@ impl CinematographyTab {
         ui: &mut egui::Ui,
         project: &Project,
         shot: Option<ShotId>,
-        tests: &[u32],
+        tests: &[TestShot],
     ) {
         ui.horizontal(|ui| {
             ui.label(section_title("Test shots"));
@@ -457,7 +464,8 @@ impl CinematographyTab {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
-                    for &number in tests {
+                    for test in tests {
+                        let number = test.number();
                         let (rect, response) = ui.allocate_exact_size(THUMB_SIZE, Sense::click());
                         let painter = ui.painter_at(rect);
                         painter.rect_filled(rect, 0.0, theme::BACKGROUND);
@@ -510,7 +518,7 @@ impl CinematographyTab {
                         painter.rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Inside);
                         let response = response
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .on_hover_text(format!("Test shot {number}"));
+                            .on_hover_text(test_summary(test));
                         if response.clicked() {
                             self.view = match self.view {
                                 View::Compare(_) => View::Compare(number),
@@ -611,6 +619,11 @@ impl CinematographyTab {
         }
         ui.add_space(4.0);
         ui.label(dim("Saved in the shot's tests folder, never in a take."));
+
+        if let Some(test) = self.view.test().and_then(|n| active_shot?.test(n)) {
+            ui.add_space(20.0);
+            test_settings(ui, test, active_shot.map(|s| s.camera()), actions);
+        }
     }
 
     /// Follows a drag on a ruler, or on the gap between two, and applies it
@@ -1144,6 +1157,74 @@ fn setting_row(
     });
 }
 
+/// The camera settings a test shot was taken with, and the button that makes
+/// them the shot's settings (CT11).
+fn test_settings(
+    ui: &mut egui::Ui,
+    test: &TestShot,
+    shot: Option<&CameraSettings>,
+    actions: &mut Vec<Action>,
+) {
+    ui.label(section_title(&format!("Test shot {}", test.number())));
+    ui.add_space(4.0);
+    let recorded = test.camera();
+    if recorded.is_empty() {
+        ui.label(dim("No camera settings were recorded with this test shot."));
+        return;
+    }
+    let changes = shot.map_or_else(Vec::new, |shot| changed_settings(recorded, shot));
+    for setting in Setting::ALL {
+        let Some(value) = recorded.get(setting) else {
+            continue;
+        };
+        ui.horizontal(|ui| {
+            ui.label(dim(setting.label()));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let text = RichText::new(value);
+                if changes.contains(&setting) {
+                    ui.label(text.color(theme::BRICK_HOVER).strong())
+                        .on_hover_text(format!(
+                            "The shot uses {}.",
+                            shot.and_then(|s| s.get(setting))
+                                .unwrap_or("the camera's value")
+                        ));
+                } else {
+                    ui.label(text);
+                }
+            });
+        });
+    }
+    ui.add_space(6.0);
+    let button =
+        egui::Button::new("Use these settings").min_size(Vec2::new(ui.available_width(), 30.0));
+    let response = ui
+        .add_enabled(!changes.is_empty(), button)
+        .on_hover_text("Make these the shot's settings and set the camera to them.")
+        .on_disabled_hover_text("The shot already uses these settings.");
+    if response.clicked() {
+        actions.push(Action::UseTestSettings(test.number()));
+    }
+}
+
+/// The settings `recorded` would change if it became the shot's settings.
+fn changed_settings(recorded: &CameraSettings, shot: &CameraSettings) -> Vec<Setting> {
+    Setting::ALL
+        .into_iter()
+        .filter(|s| recorded.get(*s).is_some_and(|v| shot.get(*s) != Some(v)))
+        .collect()
+}
+
+/// A test shot's number and the settings it was taken with, for its tooltip.
+fn test_summary(test: &TestShot) -> String {
+    let mut text = format!("Test shot {}", test.number());
+    for setting in Setting::ALL {
+        if let Some(value) = test.camera().get(setting) {
+            text.push_str(&format!("\n{}: {value}", setting.label()));
+        }
+    }
+    text
+}
+
 /// The largest rect with `aspect` (width / height) centered in `rect`.
 fn fit(rect: Rect, aspect: f32) -> Rect {
     let size = if rect.width() / rect.height() > aspect {
@@ -1242,6 +1323,19 @@ mod tests {
         assert_eq!(ruler_label("f/5.6"), "5.6");
         assert_eq!(ruler_label("1\"3"), "1\"3");
         assert_eq!(ruler_label("400"), "400");
+    }
+
+    #[test]
+    fn changed_settings_ignore_unrecorded_ones() {
+        let mut recorded = CameraSettings::default();
+        recorded.set(Setting::Iso, Some("200".into()));
+        recorded.set(Setting::Aperture, Some("f/8".into()));
+        let mut shot = CameraSettings::default();
+        shot.set(Setting::Iso, Some("200".into()));
+        shot.set(Setting::ShutterSpeed, Some("1/60".into()));
+        assert_eq!(changed_settings(&recorded, &shot), [Setting::Aperture]);
+        shot.set(Setting::Aperture, Some("f/8".into()));
+        assert!(changed_settings(&recorded, &shot).is_empty());
     }
 
     #[test]

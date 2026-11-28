@@ -33,7 +33,11 @@ pub enum CameraEvent {
     Connected,
     /// The camera accepted a new value for a setting.
     SettingChanged(Setting, String),
-    Captured(Capture),
+    /// A picture was taken, with the camera's settings at the time.
+    Captured {
+        capture: Capture,
+        settings: Box<CameraSettings>,
+    },
     /// Something failed. The message is shown to the user (U5).
     Error(String),
 }
@@ -278,10 +282,13 @@ impl Cameras {
                     ))),
                 }
             }
-            Event::Captured(result) => {
+            Event::Captured { result, settings } => {
                 self.capturing = false;
                 match result {
-                    Ok(capture) => events.push(CameraEvent::Captured(capture)),
+                    Ok(capture) => events.push(CameraEvent::Captured {
+                        capture,
+                        settings: Box::new(settings),
+                    }),
                     Err(e) => events.push(CameraEvent::Error(format!("The capture failed: {e}"))),
                 }
             }

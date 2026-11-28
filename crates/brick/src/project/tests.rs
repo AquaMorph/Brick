@@ -261,8 +261,18 @@ fn test_shots_are_numbered_and_never_reused() {
     let scene = project.add_scene("Scene").unwrap();
     let shot = project.add_shot(scene, "Shot").unwrap();
 
-    assert_eq!(project.add_test_shot(shot, &capture(1)).unwrap(), 1);
-    assert_eq!(project.add_test_shot(shot, &capture(2)).unwrap(), 2);
+    assert_eq!(
+        project
+            .add_test_shot(shot, &capture(1), &CameraSettings::default())
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        project
+            .add_test_shot(shot, &capture(2), &CameraSettings::default())
+            .unwrap(),
+        2
+    );
     let tests = project.root().join("0001_SCENE/0001_SHOT/tests");
     assert_eq!(fs::read(tests.join("000002.jpg")).unwrap(), [2; 4]);
     assert_eq!(fs::read(tests.join("000002.cr3")).unwrap(), [2; 8]);
@@ -273,9 +283,68 @@ fn test_shots_are_numbered_and_never_reused() {
     let root = project.root().to_owned();
     drop(project);
     let mut project = Project::open(&root).unwrap();
-    assert_eq!(project.shot(shot).unwrap().tests(), [1]);
-    assert_eq!(project.add_test_shot(shot, &capture(3)).unwrap(), 3);
-    assert_eq!(project.shot(shot).unwrap().tests(), [1, 3]);
+    assert_eq!(test_numbers(&project, shot), [1]);
+    assert_eq!(
+        project
+            .add_test_shot(shot, &capture(3), &CameraSettings::default())
+            .unwrap(),
+        3
+    );
+    assert_eq!(test_numbers(&project, shot), [1, 3]);
+}
+
+fn test_numbers(project: &Project, shot: ShotId) -> Vec<u32> {
+    let tests = project.shot(shot).unwrap().tests();
+    tests.iter().map(TestShot::number).collect()
+}
+
+#[test]
+fn test_shots_record_their_camera_settings() {
+    let (_dir, mut project) = new_project();
+    let scene = project.add_scene("Scene").unwrap();
+    let shot = project.add_shot(scene, "Shot").unwrap();
+    let mut taken = CameraSettings::default();
+    taken.set(Setting::ShutterSpeed, Some("1/30".into()));
+    taken.set(Setting::Iso, Some("400".into()));
+    let number = project.add_test_shot(shot, &capture(1), &taken).unwrap();
+    let conf = project
+        .root()
+        .join("0001_SCENE/0001_SHOT/tests/000001.conf");
+    assert!(fs::read_to_string(conf).unwrap().contains("[camera]"));
+
+    let root = project.root().to_owned();
+    drop(project);
+    let mut project = Project::open(&root).unwrap();
+    assert_eq!(
+        project.shot(shot).unwrap().test(number).unwrap().camera(),
+        &taken
+    );
+
+    // The shot keeps what the test shot did not record.
+    let mut current = CameraSettings::default();
+    current.set(Setting::ShutterSpeed, Some("1/60".into()));
+    current.set(Setting::Aperture, Some("f/8".into()));
+    project.set_shot_camera(shot, &current).unwrap();
+    project.use_test_settings(shot, number).unwrap();
+    let mut expected = taken.clone();
+    expected.set(Setting::Aperture, Some("f/8".into()));
+    assert_eq!(project.shot(shot).unwrap().camera(), &expected);
+    assert!(project.use_test_settings(shot, 9).is_err());
+}
+
+#[test]
+fn test_shots_without_settings_still_load() {
+    let (_dir, mut project) = new_project();
+    let scene = project.add_scene("Scene").unwrap();
+    let shot = project.add_shot(scene, "Shot").unwrap();
+    let tests = project.root().join("0001_SCENE/0001_SHOT/tests");
+    fs::create_dir_all(&tests).unwrap();
+    fs::write(tests.join("000001.jpg"), [0; 4]).unwrap();
+    let root = project.root().to_owned();
+    drop(project);
+    let project = Project::open(&root).unwrap();
+    let test = project.shot(shot).unwrap().test(1).unwrap();
+    assert!(test.camera().is_empty());
 }
 
 #[test]
@@ -284,7 +353,7 @@ fn shot_camera_settings_round_trip() {
     let scene = project.add_scene("Scene").unwrap();
     let shot = project.add_shot(scene, "Shot").unwrap();
     let mut settings = CameraSettings::default();
-    settings.set(crate::camera::Setting::Aperture, Some("f/8".into()));
+    settings.set(Setting::Aperture, Some("f/8".into()));
     project.set_shot_camera(shot, &settings).unwrap();
 
     let root = project.root().to_owned();

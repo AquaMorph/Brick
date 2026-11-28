@@ -524,6 +524,9 @@ impl BrickApp {
                     self.pending_test = active_key;
                 }
             }
+            cinematography::Action::UseTestSettings(number) => {
+                self.use_test_settings(number);
+            }
         }
     }
 
@@ -545,7 +548,7 @@ impl BrickApp {
                     let (key, _, _) = self.pending_settings.remove(index);
                     self.save_shot_setting(key, setting, value);
                 }
-                CameraEvent::Captured(capture) => {
+                CameraEvent::Captured { capture, settings } => {
                     let key = self.pending_test.take();
                     let target = self
                         .project
@@ -557,7 +560,7 @@ impl BrickApp {
                         );
                         continue;
                     };
-                    match project.add_test_shot(shot, &capture) {
+                    match project.add_test_shot(shot, &capture, &settings) {
                         Ok(number) => {
                             if self.applied_shot == Some(key) {
                                 self.cinematography.show_test(number);
@@ -576,6 +579,29 @@ impl BrickApp {
                 }
             }
         }
+    }
+
+    /// Makes a test shot's settings the active shot's settings and sets the
+    /// camera to them (CT11).
+    fn use_test_settings(&mut self, number: u32) {
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        let Some(id) = project.active().map(|take| take.shot_id()) else {
+            return;
+        };
+        let Some(key) = project.shot(id).map(|shot| shot.key()) else {
+            return;
+        };
+        if let Err(e) = project.use_test_settings(id, number) {
+            self.errors
+                .push(format!("Could not use the test shot's settings: {e}"));
+            return;
+        }
+        // Changes still on their way to the camera must not overwrite the
+        // new settings when they arrive.
+        self.pending_settings.retain(|(k, _, _)| *k != key);
+        self.applied_shot = None;
     }
 
     fn active_shot_key(&self) -> Option<ShotKey> {

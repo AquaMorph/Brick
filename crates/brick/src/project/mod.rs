@@ -14,12 +14,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
-use crate::camera::{CameraSettings, Capture};
+use crate::camera::{CameraSettings, Capture, Setting};
 
 const PROJECT_CONF: &str = "project.conf";
 const SCENE_CONF: &str = "scene.conf";
 const SHOT_CONF: &str = "shot.conf";
 const TAKE_CONF: &str = "take.conf";
+/// Extension of the config file beside each test shot recording the camera
+/// settings it was taken with (P15).
+const TEST_CONF_EXTENSION: &str = "conf";
 /// Test shots of a shot (P15).
 const TESTS_DIR: &str = "tests";
 /// File locked while a project is open, so only one instance can open it (P10).
@@ -205,6 +208,14 @@ fn first_number() -> u32 {
     1
 }
 
+/// The config file beside a test shot (P15).
+#[derive(Serialize, Deserialize)]
+struct TestConf {
+    /// The camera settings the test shot was taken with.
+    #[serde(default)]
+    camera: CameraSettings,
+}
+
 #[derive(Serialize, Deserialize)]
 struct TakeConf {
     #[serde(default)]
@@ -252,8 +263,8 @@ pub struct Shot {
     next_take: u32,
     next_test: u32,
     camera: CameraSettings,
-    /// Test shot image numbers in capture order (CT5).
-    tests: Vec<u32>,
+    /// Test shots in capture order (CT5).
+    tests: Vec<TestShot>,
     takes: Vec<Take>,
 }
 
@@ -288,9 +299,13 @@ impl Shot {
         &self.camera
     }
 
-    /// Test shot image numbers, oldest first (CT5).
-    pub fn tests(&self) -> &[u32] {
+    /// Test shots, oldest first (CT5).
+    pub fn tests(&self) -> &[TestShot] {
         &self.tests
+    }
+
+    pub fn test(&self, number: u32) -> Option<&TestShot> {
+        self.tests.iter().find(|t| t.number == number)
     }
 
     fn conf(&self) -> ShotConf {
@@ -302,6 +317,24 @@ impl Shot {
             next_test: self.next_test,
             camera: self.camera.clone(),
         }
+    }
+}
+
+/// A test shot of a shot (CT5, P15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestShot {
+    number: u32,
+    camera: CameraSettings,
+}
+
+impl TestShot {
+    pub fn number(&self) -> u32 {
+        self.number
+    }
+
+    /// The camera settings the test shot was taken with.
+    pub fn camera(&self) -> &CameraSettings {
+        &self.camera
     }
 }
 
@@ -589,10 +622,15 @@ impl Project {
             .join(image_name(number, "jpg"))
     }
 
-    /// Writes a captured test shot to the shot's `tests/` folder and returns
-    /// its number (CT5, P15). The files are flushed to disk before the test
-    /// shot is listed (P7).
-    pub fn add_test_shot(&mut self, id: ShotId, capture: &Capture) -> Result<u32> {
+    /// Writes a captured test shot and the camera settings it was taken with
+    /// to the shot's `tests/` folder and returns its number (CT5, P15). The
+    /// files are flushed to disk before the test shot is listed (P7).
+    pub fn add_test_shot(
+        &mut self,
+        id: ShotId,
+        capture: &Capture,
+        camera: &CameraSettings,
+    ) -> Result<u32> {
         let shot = self
             .shot(id)
             .ok_or_else(|| Error::Invalid("No such shot.".into()))?;
@@ -605,10 +643,35 @@ impl Project {
         if let Some((extension, raw)) = &capture.raw {
             disk::write_image(&dir.join(image_name(number, extension)), raw)?;
         }
+        let conf = TestConf {
+            camera: camera.clone(),
+        };
+        disk::write_config(&dir.join(image_name(number, TEST_CONF_EXTENSION)), &conf)?;
         // The JPEG goes last: a test shot is listed once its JPEG exists.
         disk::write_image(&dir.join(image_name(number, "jpg")), &capture.jpeg)?;
-        self.scenes[id.scene].shots[id.shot].tests.push(number);
+        self.scenes[id.scene].shots[id.shot].tests.push(TestShot {
+            number,
+            camera: conf.camera,
+        });
         Ok(number)
+    }
+
+    /// Makes the camera settings a test shot was taken with the shot's
+    /// settings (CT11). Settings the test shot did not record are kept.
+    pub fn use_test_settings(&mut self, id: ShotId, number: u32) -> Result<()> {
+        let shot = self
+            .shot(id)
+            .ok_or_else(|| Error::Invalid("No such shot.".into()))?;
+        let test = shot
+            .test(number)
+            .ok_or_else(|| Error::Invalid("No such test shot.".into()))?;
+        let mut camera = shot.camera.clone();
+        for setting in Setting::ALL {
+            if let Some(value) = test.camera.get(setting) {
+                camera.set(setting, Some(value.to_owned()));
+            }
+        }
+        self.set_shot_camera(id, &camera)
     }
 
     /// Moves a shot within its scene so it ends up at position `to`.
@@ -841,8 +904,20 @@ fn load_shot(path: &Path, dir: String) -> Result<Shot> {
     let chosen_take = conf
         .chosen_take
         .filter(|n| takes.iter().any(|t| t.number == *n));
-    let tests = disk::image_numbers(&path.join(TESTS_DIR), "jpg")?;
-    let highest_test = tests.last().copied().unwrap_or(0);
+    let tests_dir = path.join(TESTS_DIR);
+    let mut tests = Vec::new();
+    for number in disk::image_numbers(&tests_dir, "jpg")? {
+        let conf = tests_dir.join(image_name(number, TEST_CONF_EXTENSION));
+        // A test shot without its config file still shows; it just has no
+        // settings to offer.
+        let camera = if conf.exists() {
+            disk::read_config::<TestConf>(&conf)?.camera
+        } else {
+            CameraSettings::default()
+        };
+        tests.push(TestShot { number, camera });
+    }
+    let highest_test = tests.last().map_or(0, |t| t.number);
     Ok(Shot {
         key: ShotKey::new(),
         dir,

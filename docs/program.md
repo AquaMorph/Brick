@@ -46,6 +46,7 @@ Brick is a cross-platform stop motion application for Linux, Windows, and macOS.
           │   └── scene.wav
           ├── tests/
           │   ├── 000001.jpg
+          │   ├── 000001.conf
           │   └── ...
           └── 0001_TAKE/
               ├── take.conf
@@ -69,10 +70,10 @@ Brick is a cross-platform stop motion application for Linux, Windows, and macOS.
 - **P9** — Generated data such as thumbnails and playback proxies is stored in `.cache/` at the root of the project. It can be deleted at any time and is rebuilt on demand.
 - **P10** — Only one instance of the program may have a project open at a time. Opening a project that is already open shows an error instead of opening it twice.
 - **P11** — Application settings that are not project data (recent projects, window layout, last used camera) are stored in the operating system's standard config directory.
-- **P12** — Config files are TOML. `project.conf` holds project settings such as the frame rate (P3). `scene.conf` holds the scene name and notes. `shot.conf` holds the shot name, notes, camera settings (CT7), chosen take (DT6), and the next take and test shot numbers so numbers are never reused (P5, DT2). `take.conf` holds the frame order, holds (AT10), and notes.
+- **P12** — Config files are TOML. `project.conf` holds project settings such as the frame rate (P3). `scene.conf` holds the scene name and notes. `shot.conf` holds the shot name, notes, camera settings (CT7), chosen take (DT6), and the next take and test shot numbers so numbers are never reused (P5, DT2). `take.conf` holds the frame order, holds (AT10), and notes. Each test shot has a config file holding the camera settings it was taken with (P15, CT11).
 - **P13** — Scene and shot directories are named `NNNN_NAME`, where `NNNN` is the four digit position starting at `0001` and `NAME` is the user given name in upper case with spaces and characters that are not letters or digits replaced by underscores. Renaming or reordering a scene or shot renames its directory. Take directories are named `NNNN_TAKE`, where `NNNN` is the take number (DT2).
 - **P14** — `preview/high_res/` holds the full resolution JPEG of each capture. `preview/low_res/` holds the live view frame grabbed at the moment of capture, used by the default animation preview (AT4). `RAW/` holds the camera RAW file when the camera captures RAW (C4) and keeps the camera's extension (for example `.cr3`).
-- **P15** — Test shots (CT5) are stored in the shot's `tests/` folder, numbered the same way as frames (P5).
+- **P15** — Test shots (CT5) are stored in the shot's `tests/` folder, numbered the same way as frames (P5). Beside each test shot's JPEG is a TOML config file with the same number (`000001.conf`) recording every camera setting the camera reported when the test shot was taken. It is written before the JPEG.
 - **P16** — Audio for a shot is stored in the shot's `audio/` folder.
 
 ## File Menu
@@ -123,6 +124,7 @@ Brick is a cross-platform stop motion application for Linux, Windows, and macOS.
 - **CT8** — Camera settings can only be changed on this tab. The Animation tab does not show them and cannot change them, so settings are never bumped by accident while animating.
 - **CT9** — Shutter speed, aperture, and ISO are shown as rulers stacked on one scale of stops, sliding under a fixed center line that marks the current values. A third of a stop is the same width on every ruler, so their marks line up. Aperture gets brighter to the right and shutter speed and ISO to the left, so neighbouring rulers traded against each other slide the same way. The part of a ruler past the setting's last value is shaded. Dragging a ruler or clicking a value on it changes the setting. Above the rulers the current values are shown, each opening a list of every value, beside the exposure in EV compared with the shot's exposure when it was first shown with the camera. Clicking the EV makes the current exposure 0 EV.
 - **CT10** — One of the three settings can be locked. Nothing is locked by default. A locked setting cannot change, and moving either of the other two moves the other one the opposite way so the exposure stays the same. Values the other setting cannot make up for are skipped, and a drag stops as soon as either of the two runs out of values, even if the other could go further. With nothing locked, each setting changes the exposure on its own. Dragging the gap between two rulers trades those two the same way, whether or not a setting is locked, as long as neither of them is the locked one.
+- **CT11** — Each test shot records the camera settings it was taken with (P15). The settings of the selected test shot are shown beside it, with the ones that differ from the shot's settings highlighted. A "Use these settings" action makes them the shot's settings (CT7) and sets the camera to them. Settings the test shot did not record are left as they are.
 
 ## Animation Tab
 

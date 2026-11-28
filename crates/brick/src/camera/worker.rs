@@ -33,7 +33,11 @@ pub enum Event {
         result: Result<()>,
         settings: CameraSettings,
     },
-    Captured(Result<Capture>),
+    Captured {
+        result: Result<Capture>,
+        /// The camera's settings when the picture was taken.
+        settings: CameraSettings,
+    },
     /// The camera could not be opened or was disconnected. The worker has
     /// stopped.
     Lost(Error),
@@ -150,9 +154,10 @@ fn run(
                 }
             }
             Some(Command::Capture) => {
+                let settings = camera.settings();
                 let result = camera.capture();
                 let lost = disconnected(&result);
-                send(Event::Captured(result));
+                send(Event::Captured { result, settings });
                 lost
             }
             None => match camera.live_view() {
@@ -246,7 +251,10 @@ mod tests {
         worker.send(Command::Capture);
         assert!(matches!(
             next(&worker),
-            Event::Captured(Err(Error::Failed(_)))
+            Event::Captured {
+                result: Err(Error::Failed(_)),
+                ..
+            }
         ));
         worker.send(Command::Set(Setting::Iso, "100".into()));
         assert!(matches!(next(&worker), Event::Set { result: Err(_), .. }));
