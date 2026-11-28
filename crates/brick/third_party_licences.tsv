@@ -189,6 +189,7 @@ objc2-core-video	0.3.2	Zlib OR Apache-2.0 OR MIT
 objc2-encode	4.1.0	MIT
 objc2-foundation	0.2.2	MIT
 objc2-foundation	0.3.2	MIT
+objc2-io-kit	0.3.2	Zlib OR Apache-2.0 OR MIT
 objc2-io-surface	0.3.2	Zlib OR Apache-2.0 OR MIT
 objc2-link-presentation	0.2.2	MIT
 objc2-metal	0.2.2	MIT

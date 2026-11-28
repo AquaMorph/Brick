@@ -12,6 +12,7 @@ use std::time::Duration;
 use brick_v4l2::{self as v4l2, Device, FourCc, PixFormat, Stream};
 use image::codecs::jpeg::JpegEncoder;
 
+use super::webcam::{self, Range};
 use super::{Backend, Camera, CameraInfo, CameraSettings, Capture, Control, Error, Frame, Result};
 use super::{Setting, resolution_label};
 
@@ -29,27 +30,6 @@ const BLACK: f64 = 3.0;
 /// The `CID_EXPOSURE_AUTO` menu value for aperture priority, the automatic
 /// mode UVC webcams support.
 const EXPOSURE_AUTO: i32 = 3;
-/// Most values offered for a control with a wide range.
-const MAX_STEPS: i32 = 20;
-
-/// Shutter speeds offered for the exposure time, with their length in
-/// seconds. Only those within the webcam's range are offered.
-const SHUTTER_SPEEDS: [(&str, f64); 13] = [
-    ("1/4000", 1.0 / 4000.0),
-    ("1/2000", 1.0 / 2000.0),
-    ("1/1000", 1.0 / 1000.0),
-    ("1/500", 1.0 / 500.0),
-    ("1/250", 1.0 / 250.0),
-    ("1/125", 1.0 / 125.0),
-    ("1/60", 1.0 / 60.0),
-    ("1/30", 1.0 / 30.0),
-    ("1/15", 1.0 / 15.0),
-    ("1/8", 1.0 / 8.0),
-    ("1/4", 1.0 / 4.0),
-    ("1/2", 1.0 / 2.0),
-    ("1\"", 1.0),
-];
-
 pub struct V4l2Backend;
 
 impl Backend for V4l2Backend {
@@ -149,14 +129,14 @@ impl Webcam {
             let Some(info) = device.query_control(id)? else {
                 continue;
             };
-            let choices = match setting {
-                Setting::ShutterSpeed => exposure_choices(&info),
-                Setting::WhiteBalance => kelvin_choices(&info),
-                _ => steps(&info, MAX_STEPS)
-                    .into_iter()
-                    .map(|v| (v.to_string(), v))
-                    .collect(),
-            };
+            let choices = webcam::choices(
+                setting,
+                Range {
+                    minimum: info.minimum,
+                    maximum: info.maximum,
+                    step: info.step,
+                },
+            );
             if !choices.is_empty() {
                 controls.push(WebcamControl {
                     setting,
@@ -312,11 +292,8 @@ impl Camera for Webcam {
             let Ok(value) = self.device.control(control.id) else {
                 continue;
             };
-            let nearest = control
-                .choices
-                .iter()
-                .min_by_key(|(_, v)| (i64::from(*v) - i64::from(value)).abs());
-            settings.set(control.setting, nearest.map(|(label, _)| label.clone()));
+            let nearest = webcam::nearest(&control.choices, value);
+            settings.set(control.setting, nearest.map(str::to_owned));
         }
         settings
     }
@@ -423,56 +400,6 @@ fn error(e: &io::Error, context: &str) -> Error {
     }
 }
 
-/// Exposure time is in units of 100 µs.
-fn exposure_choices(info: &v4l2::ControlInfo) -> Vec<(String, i32)> {
-    let mut choices: Vec<(String, i32)> = SHUTTER_SPEEDS
-        .iter()
-        .filter_map(|(label, seconds)| {
-            let units = snap(info, (seconds * 10_000.0).round() as i32);
-            let exact = (f64::from(units) / 10_000.0 - seconds).abs() / seconds < 0.05;
-            exact.then(|| ((*label).to_owned(), units))
-        })
-        .collect();
-    choices.dedup_by_key(|(_, v)| *v);
-    choices
-}
-
-fn kelvin_choices(info: &v4l2::ControlInfo) -> Vec<(String, i32)> {
-    let mut choices: Vec<(String, i32)> = (info.minimum..=info.maximum)
-        .step_by(100)
-        .map(|k| snap(info, (k + 99) / 100 * 100))
-        .map(|k| (format!("{k} K"), k))
-        .collect();
-    choices.dedup_by_key(|(_, v)| *v);
-    choices
-}
-
-/// Up to `count + 1` evenly spaced values across a control's range.
-fn steps(info: &v4l2::ControlInfo, count: i32) -> Vec<i32> {
-    let range = i64::from(info.maximum) - i64::from(info.minimum);
-    if range <= 0 {
-        return vec![info.minimum];
-    }
-    let mut values: Vec<i32> = (0..=i64::from(count))
-        .map(|i| {
-            snap(
-                info,
-                (i64::from(info.minimum) + range * i / i64::from(count)) as i32,
-            )
-        })
-        .collect();
-    values.dedup();
-    values
-}
-
-/// The closest value to `value` the control accepts.
-fn snap(info: &v4l2::ControlInfo, value: i32) -> i32 {
-    let step = i64::from(info.step.max(1));
-    let min = i64::from(info.minimum);
-    let offset = (i64::from(value) - min + step / 2).div_euclid(step) * step;
-    (min + offset).clamp(min, i64::from(info.maximum)) as i32
-}
-
 fn has_huffman_tables(jpeg: &[u8]) -> bool {
     jpeg.windows(2).any(|w| w == [0xff, 0xc4])
 }
@@ -480,48 +407,6 @@ fn has_huffman_tables(jpeg: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn control(minimum: i32, maximum: i32, step: i32) -> v4l2::ControlInfo {
-        v4l2::ControlInfo {
-            id: 0,
-            minimum,
-            maximum,
-            step,
-            default: minimum,
-            inactive: false,
-        }
-    }
-
-    #[test]
-    fn exposure_offers_shutter_speeds_in_range() {
-        // 1 ms to 62.5 ms, as on a common laptop webcam.
-        let labels: Vec<String> = exposure_choices(&control(10, 625, 1))
-            .into_iter()
-            .map(|(label, _)| label)
-            .collect();
-        assert_eq!(
-            labels,
-            ["1/1000", "1/500", "1/250", "1/125", "1/60", "1/30"]
-        );
-    }
-
-    #[test]
-    fn steps_follow_the_control_step() {
-        assert_eq!(steps(&control(0, 4, 1), 20), [0, 1, 2, 3, 4]);
-        let wide = steps(&control(0, 255, 5), 20);
-        assert_eq!(wide.first(), Some(&0));
-        assert_eq!(wide.last(), Some(&255));
-        assert!(wide.iter().all(|v| v % 5 == 0));
-        assert_eq!(snap(&control(2800, 6500, 10), 4604), 4600);
-    }
-
-    #[test]
-    fn white_balance_in_hundreds_of_kelvin() {
-        let choices = kelvin_choices(&control(2800, 6500, 10));
-        assert_eq!(choices.first().map(|c| c.0.as_str()), Some("2800 K"));
-        assert_eq!(choices.last().map(|c| c.0.as_str()), Some("6500 K"));
-        assert_eq!(choices.len(), 38);
-    }
 
     #[test]
     fn names_are_not_repeated() {

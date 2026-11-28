@@ -11,8 +11,12 @@ pub mod exposure;
 pub mod manager;
 #[cfg(debug_assertions)]
 mod simulated;
+#[cfg(target_os = "macos")]
+mod uvc;
 #[cfg(target_os = "linux")]
 mod v4l2;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod webcam;
 mod worker;
 
 use std::fmt;

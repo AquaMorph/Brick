@@ -2,8 +2,8 @@
 //! (C2).
 //!
 //! This crate holds all of the unsafe code needed to talk to AVFoundation
-//! (R4). The rest of Brick only sees the safe API: [`devices`] and
-//! [`Device`].
+//! (R4). The rest of Brick only sees the safe API: [`devices`], [`Device`],
+//! and [`usb::UsbDevice`] for the webcam controls AVFoundation does not offer.
 //!
 //! Almost every AVFoundation call is `unsafe` in the Rust bindings only
 //! because the bindings cannot check Objective-C's rules for themselves. The
@@ -17,6 +17,8 @@
 //!   any of its settings are changed, as AVFoundation requires.
 
 #![cfg(target_os = "macos")]
+
+pub mod usb;
 
 use std::io;
 use std::sync::{Arc, Condvar, Mutex, mpsc};
