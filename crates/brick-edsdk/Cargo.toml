@@ -1,0 +1,29 @@
+[package]
+name = "brick-edsdk"
+description = "Safe access to Canon DSLRs through the EDSDK for Brick"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+# Tells dependents' build scripts where the SDK was found (DEP_EDSDK_DIR), so
+# the program can find the SDK libraries when it runs.
+links = "EDSDK"
+build = "build.rs"
+
+# Drives a connected camera, see the file for how to run it. It needs its own
+# main function, because on macOS the SDK only finds cameras while the main
+# thread runs its run loop.
+[[test]]
+name = "camera"
+harness = false
+
+# R4: this crate holds the unsafe FFI code the rest of Brick is not allowed to
+# contain. Every unsafe block must say why it is sound.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(brick_edsdk)"] }
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"

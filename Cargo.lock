@@ -455,6 +455,7 @@ name = "brick"
 version = "0.1.0"
 dependencies = [
  "brick-avfoundation",
+ "brick-edsdk",
  "brick-v4l2",
  "directories",
  "eframe",
@@ -481,6 +482,10 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "objc2-io-kit",
 ]
+
+[[package]]
+name = "brick-edsdk"
+version = "0.1.0"
 
 [[package]]
 name = "brick-v4l2"

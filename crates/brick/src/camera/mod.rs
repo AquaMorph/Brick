@@ -7,6 +7,7 @@
 
 #[cfg(target_os = "macos")]
 mod avfoundation;
+mod canon;
 pub mod exposure;
 pub mod manager;
 #[cfg(debug_assertions)]
@@ -163,13 +164,6 @@ pub struct Capture {
 #[derive(Debug, Clone)]
 pub enum Error {
     /// The camera is gone. The worker stops and the camera must be reopened.
-    #[cfg_attr(
-        all(not(target_os = "linux"), not(target_os = "macos"), not(test)),
-        expect(
-            dead_code,
-            reason = "only the V4L2 and AVFoundation backends can lose their camera until the Windows backend exists"
-        )
-    )]
     Disconnected(String),
     /// A request failed but the camera is still usable.
     Failed(String),
@@ -227,6 +221,10 @@ pub fn backends() -> Vec<Box<dyn Backend>> {
     backends.push(Box::new(v4l2::V4l2Backend));
     #[cfg(target_os = "macos")]
     backends.push(Box::new(avfoundation::AvFoundationBackend));
+    // R11: without the EDSDK, DSLR support is left out.
+    if brick_edsdk::AVAILABLE {
+        backends.push(Box::new(canon::CanonBackend));
+    }
     #[cfg(debug_assertions)]
     backends.push(Box::new(simulated::SimulatedBackend));
     backends

@@ -96,7 +96,19 @@ pub fn run(archives: &[&str]) -> Result<(), String> {
     for archive in &archives {
         install(archive, &edsdk).map_err(|e| format!("{}: {e}", archive.display()))?;
     }
-    Ok(())
+    rebuild_with_sdk(&root)
+}
+
+/// Marks `brick-edsdk`'s build script as changed, so the next build looks for
+/// the SDK again and links it. Without the SDK the build script only watches
+/// itself (see `crates/brick-edsdk/build.rs`).
+fn rebuild_with_sdk(root: &Path) -> Result<(), String> {
+    let build_script = root.join("crates/brick-edsdk/build.rs");
+    File::options()
+        .append(true)
+        .open(&build_script)
+        .and_then(|file| file.set_modified(std::time::SystemTime::now()))
+        .map_err(|e| format!("failed to touch {}: {e}", build_script.display()))
 }
 
 pub fn workspace_root() -> PathBuf {

@@ -100,13 +100,13 @@ Brick is a cross-platform stop motion application for Linux, Windows, and macOS.
 - **C1** — The camera abstraction supports live view, capture, and reading and writing settings. DSLRs and webcams both implement it.
 - **C2** — Webcams are supported on Linux through V4L2, on Windows through Media Foundation, and on macOS through AVFoundation.
 - **C3** — Canon DSLRs are supported through the EDSDK on all three platforms. Captured images are transferred directly to the computer, not saved to the camera's memory card.
-- **C4** — When a DSLR is set to RAW+JPEG, both files are kept. The JPEG is stored in `preview/high_res/` and used for display, high resolution playback, and export by default. The RAW file is stored in `RAW/` for the user (P14).
+- **C4** — When a DSLR is set to RAW+JPEG, both files are kept. The JPEG is stored in `preview/high_res/` and used for display, high resolution playback, and export by default. The RAW file is stored in `RAW/` for the user (P14). A DSLR set to save no JPEG (RAW or HEIF only) is switched to the largest JPEG, keeping its RAW setting, when it is opened.
 - **C5** — Only one camera is active at a time. The user picks the camera from a list of detected cameras, and the program reconnects to the last used camera automatically when it is available.
 - **C6** — Connecting and disconnecting a camera while the program is running is detected and shown in the status bar. A disconnect must not crash the program or affect frames already captured.
 - **C7** — A failed capture shows an error and leaves the take unchanged. It never adds a blank or partial frame.
 - **C8** — For webcams, auto exposure, auto white balance, and auto focus are turned off by default where the device allows it, to prevent flicker between frames.
 - **C9** — A simulated camera is available in development builds so the program can be developed and tested without hardware.
-- **C10** — Cameras capture at their native (largest) resolution by default. The Cinematography tab offers a drop down of the lower resolutions the camera supports. The resolution is saved per shot with the other camera settings (CT7).
+- **C10** — Cameras capture at their native (largest) resolution by default. The Cinematography tab offers a drop down of the lower resolutions the camera supports. For DSLRs the resolution is the size of the JPEG the camera saves (Large, Medium, Small, and so on). The resolution is saved per shot with the other camera settings (CT7).
 
 ## Direct Tab
 

@@ -9,6 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+brick-edsdk = { path = "../brick-edsdk" }
 directories = "6.0.0"
 eframe = { version = "0.37", default-features = false, features = [
     "accesskit",

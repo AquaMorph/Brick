@@ -26,6 +26,8 @@ cargo xtask edsdk ~/Downloads/EDSDK_v13.20.21_Linux.zip
 
 The task detects which platform each archive is for and unpacks only the headers and libraries into `edsdk/`. Running it again replaces the installed SDK for that platform, which is how to upgrade. The archives themselves are left alone.
 
+After installing, the next `cargo build` finds the SDK and builds with Canon DSLR support.
+
 Unpacking the macOS SDK needs `hdiutil` on macOS, or [7-Zip](https://www.7-zip.org) (`7z` on the `PATH`) on Linux and Windows, because Canon ships it as a disk image.
 
 Both `edsdk/` and the `EDSDK*.zip` downloads are ignored by git (B2). Never commit them.
@@ -55,6 +57,22 @@ edsdk/
 ```
 
 Headers are kept per platform because Canon's copies differ slightly between platforms.
+
+## Building
+
+`crates/brick-edsdk/build.rs` looks for the SDK for the target it builds in `edsdk/<target_os>/`. When the SDK is there it is linked and Canon cameras show up in the camera list; when it is not, Brick builds without DSLR support (R11). To build somewhere else's copy, set `BRICK_EDSDK_DIR` to a directory laid out like `edsdk/<target_os>/`. Pointing it at a directory that does not exist builds without the SDK, which is how to check that build on a machine that has it.
+
+Development builds find the SDK where it was installed: on macOS and Linux the program's library search path (rpath) points at `edsdk/<target_os>/`, and on Windows the SDK's DLLs are copied next to the program in `target/<profile>/`. Packages must ship the SDK libraries beside the program instead.
+
+All SDK calls are made on one thread started by `brick-edsdk`, because the SDK is not safe to call from several threads and only delivers camera events to the thread that asks for them.
+
+To check the SDK against a real camera, plug in a Canon camera, turn it on, and run:
+
+```sh
+BRICK_EDSDK_CAMERA_TEST=1 cargo test -p brick-edsdk --test camera
+```
+
+It reads the camera's settings, streams live view, and takes a picture. Set `BRICK_EDSDK_TEST_OUT` to a directory to keep the captured files.
 
 ## Distribution
 
