@@ -1226,7 +1226,7 @@ fn test_summary(test: &TestShot) -> String {
 }
 
 /// The largest rect with `aspect` (width / height) centered in `rect`.
-fn fit(rect: Rect, aspect: f32) -> Rect {
+pub(crate) fn fit(rect: Rect, aspect: f32) -> Rect {
     let size = if rect.width() / rect.height() > aspect {
         Vec2::new(rect.height() * aspect, rect.height())
     } else {
@@ -1274,7 +1274,7 @@ fn live_placeholder(ui: &mut egui::Ui, rect: Rect, connection: &Connection) {
     }
 }
 
-fn placeholder(ui: &egui::Ui, rect: Rect, title: &str, detail: &str) {
+pub(crate) fn placeholder(ui: &egui::Ui, rect: Rect, title: &str, detail: &str) {
     let painter = ui.painter_at(rect);
     painter.text(
         rect.center() - Vec2::Y * 12.0,
@@ -1292,7 +1292,7 @@ fn placeholder(ui: &egui::Ui, rect: Rect, title: &str, detail: &str) {
     );
 }
 
-fn spinner(ui: &mut egui::Ui, rect: Rect) {
+pub(crate) fn spinner(ui: &mut egui::Ui, rect: Rect) {
     let size = Vec2::splat(28.0);
     ui.put(
         Rect::from_center_size(rect.center(), size),

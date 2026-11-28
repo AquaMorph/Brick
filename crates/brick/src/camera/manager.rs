@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 use super::worker::{Command, Event, Waker, Worker};
-use super::{Backend, CameraInfo, CameraSettings, Capture, Control, Setting};
+use super::{Backend, CameraInfo, CameraSettings, Capture, Control, Frame, Setting};
 
 /// How often the connected cameras are listed.
 const DETECT_INTERVAL: Duration = Duration::from_secs(2);
@@ -37,6 +37,8 @@ pub enum CameraEvent {
     Captured {
         capture: Capture,
         settings: Box<CameraSettings>,
+        /// The low resolution preview as a JPEG, when one was asked for (P14).
+        preview: Option<Vec<u8>>,
     },
     /// Something failed. The message is shown to the user (U5).
     Error(String),
@@ -62,6 +64,7 @@ pub struct Cameras {
     capturing: bool,
     live_view: bool,
     live_sequence: u64,
+    live_frame: Option<Arc<Frame>>,
     live_texture: Option<egui::TextureHandle>,
 }
 
@@ -104,6 +107,7 @@ impl Cameras {
             capturing: false,
             live_view: false,
             live_sequence: 0,
+            live_frame: None,
             live_texture: None,
         }
     }
@@ -179,15 +183,16 @@ impl Cameras {
     }
 
     /// Starts a capture unless one is already running. Returns whether it
-    /// started.
-    pub fn capture(&mut self) -> bool {
+    /// started. With `preview`, a low resolution preview of the capture is
+    /// made from live view (P14).
+    pub fn capture(&mut self, preview: bool) -> bool {
         if self.capturing {
             return false;
         }
         let Some(worker) = self.connected_worker() else {
             return false;
         };
-        worker.send(Command::Capture);
+        worker.send(Command::Capture { preview });
         self.capturing = true;
         true
     }
@@ -217,6 +222,7 @@ impl Cameras {
         let worker = self.connected_worker()?;
         if let Some((sequence, frame)) = worker.live_frame(self.live_sequence) {
             self.live_sequence = sequence;
+            self.live_frame = Some(Arc::clone(&frame));
             let size = [frame.width as usize, frame.height as usize];
             let image = egui::ColorImage::from_rgba_unmultiplied(size, &frame.rgba);
             match &mut self.live_texture {
@@ -228,6 +234,11 @@ impl Cameras {
             }
         }
         self.live_texture.as_ref()
+    }
+
+    /// The newest live view frame shown by [`Cameras::live_texture`].
+    pub fn live_frame(&self) -> Option<&Arc<Frame>> {
+        self.live_frame.as_ref()
     }
 
     fn connected_worker(&self) -> Option<&Worker> {
@@ -282,12 +293,17 @@ impl Cameras {
                     ))),
                 }
             }
-            Event::Captured { result, settings } => {
+            Event::Captured {
+                result,
+                settings,
+                preview,
+            } => {
                 self.capturing = false;
                 match result {
                     Ok(capture) => events.push(CameraEvent::Captured {
                         capture,
                         settings: Box::new(settings),
+                        preview,
                     }),
                     Err(e) => events.push(CameraEvent::Error(format!("The capture failed: {e}"))),
                 }
@@ -344,6 +360,7 @@ impl Cameras {
         self.pending_sets = 0;
         self.capturing = false;
         self.live_sequence = 0;
+        self.live_frame = None;
         self.live_texture = None;
     }
 }

@@ -67,12 +67,23 @@ pub fn write_image(path: &Path, contents: &[u8]) -> Result<(), Error> {
 /// The numbers of the captured images in `dir` with `extension`, in order
 /// (P5). A missing directory has no images.
 pub fn image_numbers(dir: &Path, extension: &str) -> Result<Vec<u32>, Error> {
+    Ok(image_files(dir)?
+        .into_iter()
+        .filter(|(_, ext)| ext == extension)
+        .map(|(number, _)| number)
+        .collect())
+}
+
+/// The captured images in `dir` as their number and extension, ordered by
+/// number (P5). Files not named like a captured image are skipped. A missing
+/// directory has no images.
+pub fn image_files(dir: &Path) -> Result<Vec<(u32, String)>, Error> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(Error::io(dir, e)),
     };
-    let mut numbers = Vec::new();
+    let mut images = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|e| Error::io(dir, e))?;
         let Ok(name) = entry.file_name().into_string() else {
@@ -81,12 +92,17 @@ pub fn image_numbers(dir: &Path, extension: &str) -> Result<Vec<u32>, Error> {
         let Some((stem, ext)) = name.split_once('.') else {
             continue;
         };
-        if ext == extension && stem.len() == 6 && stem.bytes().all(|b| b.is_ascii_digit()) {
-            numbers.extend(stem.parse::<u32>().ok());
+        if stem.len() == 6
+            && stem.bytes().all(|b| b.is_ascii_digit())
+            && !ext.is_empty()
+            && !ext.contains('.')
+            && let Ok(number) = stem.parse::<u32>()
+        {
+            images.push((number, ext.to_owned()));
         }
     }
-    numbers.sort_unstable();
-    Ok(numbers)
+    images.sort_unstable();
+    Ok(images)
 }
 
 /// Creates a directory and flushes the new entry to disk.
@@ -201,6 +217,14 @@ pub fn sync_dir_names(
 /// directory keeps its path relative to the project root under a time stamped
 /// folder, so it can be identified later.
 pub fn move_to_trash(root: &Path, relative: &Path) -> Result<PathBuf, Error> {
+    let mut moved = move_all_to_trash(root, &[relative.to_owned()])?;
+    Ok(moved.remove(0))
+}
+
+/// Moves several files or directories into one time stamped folder in the
+/// project trash (P8) and returns where each one went. If one cannot be
+/// moved, the ones already moved are put back.
+pub fn move_all_to_trash(root: &Path, relative: &[PathBuf]) -> Result<Vec<PathBuf>, Error> {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());
@@ -211,12 +235,32 @@ pub fn move_to_trash(root: &Path, relative: &Path) -> Result<PathBuf, Error> {
         stamp += 1;
         batch = trash.join(stamp.to_string());
     }
-    let target = batch.join(relative);
-    if let Some(parent) = target.parent() {
+    let mut moved: Vec<PathBuf> = Vec::new();
+    for path in relative {
+        let target = batch.join(path);
+        let result = match target.parent() {
+            Some(parent) => create_dir(parent),
+            None => Ok(()),
+        }
+        .and_then(|()| rename(&root.join(path), &target));
+        if let Err(e) = result {
+            for (path, target) in relative.iter().zip(&moved) {
+                let _ = rename(target, &root.join(path));
+            }
+            return Err(e);
+        }
+        moved.push(target);
+    }
+    Ok(moved)
+}
+
+/// Moves a file out of the trash back to `to`, creating its directory if it
+/// is gone. An existing file is never replaced.
+pub fn restore_from_trash(from: &Path, to: &Path) -> Result<(), Error> {
+    if let Some(parent) = to.parent() {
         create_dir(parent)?;
     }
-    rename(&root.join(relative), &target)?;
-    Ok(target)
+    rename(from, to)
 }
 
 #[cfg(test)]
@@ -254,5 +298,54 @@ mod tests {
         assert_eq!([a, b], wanted);
         assert!(dir.path().join("0002_A/marker").is_file());
         assert!(dir.path().join("0001_B").is_dir());
+    }
+
+    #[test]
+    fn image_files_keep_their_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "000002.cr3",
+            "000001.jpg",
+            "000001.conf",
+            "12.jpg",
+            "notes.txt",
+        ] {
+            fs::write(dir.path().join(name), "x").unwrap();
+        }
+        assert_eq!(
+            image_files(dir.path()).unwrap(),
+            [
+                (1, "conf".to_owned()),
+                (1, "jpg".to_owned()),
+                (2, "cr3".to_owned())
+            ]
+        );
+        assert_eq!(image_numbers(dir.path(), "jpg").unwrap(), [1]);
+        assert!(image_files(&dir.path().join("missing")).unwrap().is_empty());
+    }
+
+    #[test]
+    fn trash_batches_can_be_restored() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("a/b")).unwrap();
+        fs::write(root.join("a/b/1.jpg"), "1").unwrap();
+        fs::write(root.join("a/2.jpg"), "2").unwrap();
+        let files = [PathBuf::from("a/b/1.jpg"), PathBuf::from("a/2.jpg")];
+        let moved = move_all_to_trash(root, &files).unwrap();
+        assert!(!root.join("a/b/1.jpg").exists());
+        assert_eq!(moved[0].parent().unwrap().parent(), moved[1].parent());
+        assert_eq!(fs::read_to_string(&moved[1]).unwrap(), "2");
+
+        // A file missing part way through puts the others back.
+        fs::write(root.join("a/3.jpg"), "3").unwrap();
+        let missing = [PathBuf::from("a/3.jpg"), PathBuf::from("a/4.jpg")];
+        assert!(move_all_to_trash(root, &missing).is_err());
+        assert!(root.join("a/3.jpg").is_file());
+
+        fs::remove_dir(root.join("a/b")).unwrap();
+        restore_from_trash(&moved[0], &root.join("a/b/1.jpg")).unwrap();
+        assert_eq!(fs::read_to_string(root.join("a/b/1.jpg")).unwrap(), "1");
+        assert!(restore_from_trash(&moved[1], &root.join("a/3.jpg")).is_err());
     }
 }

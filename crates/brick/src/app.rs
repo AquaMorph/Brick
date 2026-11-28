@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use eframe::egui::{self, Align, Layout, RichText};
 
-use crate::camera::{CameraEvent, Cameras, Connection, Setting};
+use crate::animation::{self, AnimationTab};
+use crate::camera::{CameraEvent, CameraSettings, Cameras, Capture, Connection, Setting};
 use crate::cinematography::{self, CinematographyTab};
 use crate::direct::DirectTab;
 use crate::file_menu::{self, FileAction};
@@ -59,9 +60,10 @@ pub struct BrickApp {
     project: Option<Project>,
     direct: DirectTab,
     cinematography: CinematographyTab,
+    animation: AnimationTab,
     cameras: Cameras,
-    /// The shot a running test shot capture belongs to (CT5).
-    pending_test: Option<ShotKey>,
+    /// Where the running capture goes.
+    pending_capture: Option<CaptureTarget>,
     /// Setting changes the user asked for that the camera has not confirmed
     /// yet, with the shot to save them to (CT7).
     pending_settings: Vec<(ShotKey, Setting, String)>,
@@ -77,6 +79,15 @@ pub struct BrickApp {
     native_menu: Option<file_menu::NativeMenu>,
     /// Errors shown at the top of the window until dismissed (U5).
     errors: Vec<String>,
+}
+
+/// Where a capture is saved once the camera delivers it.
+#[derive(Debug, Clone, Copy)]
+enum CaptureTarget {
+    /// A test shot of a shot (CT5).
+    Test(ShotKey),
+    /// A frame inserted into a take at a timeline position (AT13).
+    Frame { shot: ShotKey, take: u32, at: usize },
 }
 
 /// How long closing a project waits for a running capture to be written (F9).
@@ -99,8 +110,9 @@ impl BrickApp {
             project: None,
             direct: DirectTab::default(),
             cinematography: CinematographyTab::default(),
+            animation: AnimationTab::default(),
             cameras,
-            pending_test: None,
+            pending_capture: None,
             pending_settings: Vec::new(),
             applied_shot: None,
             settings,
@@ -161,8 +173,18 @@ impl eframe::App for BrickApp {
         let ctx = ui.ctx().clone();
         self.update_title(&ctx);
         self.poll_copy(&ctx);
+        let live_tab = matches!(self.tab, Tab::Cinematography | Tab::Animation);
         self.cameras
-            .set_live_view(self.project.is_some() && self.tab == Tab::Cinematography);
+            .set_live_view(self.project.is_some() && live_tab);
+        if self.project.is_some()
+            && self.tab == Tab::Animation
+            && self.dialog.is_none()
+            && self.copy.is_none()
+        {
+            self.animation.read_keys(&ctx);
+        } else {
+            self.animation.stop();
+        }
         let events = self.cameras.poll();
         self.camera_events(events);
         self.apply_shot_camera();
@@ -317,6 +339,7 @@ impl BrickApp {
         self.project = Some(project);
         self.direct = DirectTab::default();
         self.cinematography = CinematographyTab::default();
+        self.animation = AnimationTab::default();
         self.applied_shot = None;
         self.tab = Tab::Direct;
     }
@@ -331,6 +354,7 @@ impl BrickApp {
         self.project = None;
         self.direct = DirectTab::default();
         self.cinematography = CinematographyTab::default();
+        self.animation = AnimationTab::default();
         self.pending_settings.clear();
         self.applied_shot = None;
         self.tab = Tab::Direct;
@@ -343,9 +367,9 @@ impl BrickApp {
             let events = self.cameras.finish_capture(CAPTURE_TIMEOUT);
             self.camera_events(events);
         }
-        if self.pending_test.take().is_some() {
+        if self.pending_capture.take().is_some() {
             self.errors
-                .push("The camera did not finish the test shot before the project closed.".into());
+                .push("The camera did not finish the capture before the project closed.".into());
         }
     }
 
@@ -488,6 +512,19 @@ impl BrickApp {
                     self.cinematography_action(action);
                 }
             }
+            Tab::Animation => {
+                let mut actions = Vec::new();
+                self.animation.ui(
+                    ui,
+                    project,
+                    &mut self.cameras,
+                    &mut self.errors,
+                    &mut actions,
+                );
+                for action in actions {
+                    self.animation_action(action);
+                }
+            }
             tab => {
                 ui.centered_and_justified(|ui| {
                     ui.label(
@@ -520,12 +557,37 @@ impl BrickApp {
                 }
             }
             cinematography::Action::TestShot => {
-                if active_key.is_some() && self.cameras.capture() {
-                    self.pending_test = active_key;
+                if let Some(key) = active_key
+                    && self.cameras.capture(false)
+                {
+                    self.pending_capture = Some(CaptureTarget::Test(key));
                 }
             }
             cinematography::Action::UseTestSettings(number) => {
                 self.use_test_settings(number);
+            }
+        }
+    }
+
+    fn animation_action(&mut self, action: animation::Action) {
+        match action {
+            animation::Action::Capture { at } => {
+                let Some(project) = &self.project else {
+                    return;
+                };
+                let Some(take) = project.active() else {
+                    return;
+                };
+                let Some(shot) = project.shot(take.shot_id()).map(|s| s.key()) else {
+                    return;
+                };
+                if self.cameras.capture(true) {
+                    self.pending_capture = Some(CaptureTarget::Frame {
+                        shot,
+                        take: take.take,
+                        at,
+                    });
+                }
             }
         }
     }
@@ -548,36 +610,81 @@ impl BrickApp {
                     let (key, _, _) = self.pending_settings.remove(index);
                     self.save_shot_setting(key, setting, value);
                 }
-                CameraEvent::Captured { capture, settings } => {
-                    let key = self.pending_test.take();
-                    let target = self
-                        .project
-                        .as_mut()
-                        .and_then(|p| Some((key?, p.find_shot(key?)?, p)));
-                    let Some((key, shot, project)) = target else {
-                        self.errors.push(
-                            "The test shot was not saved because its shot no longer exists.".into(),
-                        );
-                        continue;
-                    };
-                    match project.add_test_shot(shot, &capture, &settings) {
-                        Ok(number) => {
-                            if self.applied_shot == Some(key) {
-                                self.cinematography.show_test(number);
-                            }
-                        }
-                        Err(e) => self
-                            .errors
-                            .push(format!("Could not save the test shot: {e}")),
+                CameraEvent::Captured {
+                    capture,
+                    settings,
+                    preview,
+                } => match self.pending_capture.take() {
+                    Some(CaptureTarget::Test(key)) => self.save_test_shot(key, &capture, &settings),
+                    Some(CaptureTarget::Frame { shot, take, at }) => {
+                        self.save_frame(shot, take, at, &capture, preview.as_deref());
                     }
-                }
+                    None => self
+                        .errors
+                        .push("A capture arrived that nothing was waiting for.".into()),
+                },
                 CameraEvent::Error(message) => {
                     if !self.cameras.is_capturing() {
-                        self.pending_test = None;
+                        self.pending_capture = None;
                     }
                     self.errors.push(message);
                 }
             }
+        }
+    }
+
+    /// Writes a test shot to its shot's `tests/` folder (CT5).
+    fn save_test_shot(&mut self, key: ShotKey, capture: &Capture, settings: &CameraSettings) {
+        let target = self
+            .project
+            .as_mut()
+            .and_then(|p| Some((p.find_shot(key)?, p)));
+        let Some((shot, project)) = target else {
+            self.errors
+                .push("The test shot was not saved because its shot no longer exists.".into());
+            return;
+        };
+        match project.add_test_shot(shot, capture, settings) {
+            Ok(number) => {
+                if self.applied_shot == Some(key) {
+                    self.cinematography.show_test(number);
+                }
+            }
+            Err(e) => self
+                .errors
+                .push(format!("Could not save the test shot: {e}")),
+        }
+    }
+
+    /// Writes a captured frame into its take at the capture point (P7,
+    /// AT13). A frame that cannot be saved leaves the take unchanged (C7).
+    fn save_frame(
+        &mut self,
+        shot: ShotKey,
+        take: u32,
+        at: usize,
+        capture: &Capture,
+        preview: Option<&[u8]>,
+    ) {
+        let target = self.project.as_mut().and_then(|p| {
+            let id = p.find_shot(shot)?.take(take);
+            p.take(id)?;
+            Some((id, p))
+        });
+        let Some((id, project)) = target else {
+            self.errors
+                .push("The frame was not saved because its take no longer exists.".into());
+            return;
+        };
+        let frames = |p: &Project| p.take(id).map_or_else(Vec::new, |t| t.frames().to_vec());
+        let before = frames(project);
+        match project.add_frame(id, at, capture, preview) {
+            Ok(_) => {
+                let after = frames(project);
+                let at = at.min(before.len());
+                self.animation.captured(project, id, at, before, after);
+            }
+            Err(e) => self.errors.push(format!("Could not save the frame: {e}")),
         }
     }
 

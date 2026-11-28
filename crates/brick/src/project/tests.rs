@@ -374,3 +374,153 @@ fn shot_keys_follow_moved_shots() {
     project.remove_shot(ShotId { scene, shot: 1 }).unwrap();
     assert_eq!(project.find_shot(key), None);
 }
+
+fn new_take() -> (tempfile::TempDir, Project, TakeId) {
+    let (dir, mut project) = new_project();
+    let scene = project.add_scene("Scene").unwrap();
+    let shot = project.add_shot(scene, "Shot").unwrap();
+    let take = project.add_take(shot).unwrap();
+    (dir, project, take)
+}
+
+fn frames(project: &Project, take: TakeId) -> Vec<u32> {
+    project.take(take).unwrap().frames().to_vec()
+}
+
+#[test]
+fn frames_are_written_where_p4_puts_them() {
+    let (_dir, mut project, take) = new_take();
+    assert_eq!(
+        project.add_frame(take, 0, &capture(1), Some(&[9])).unwrap(),
+        1
+    );
+    let plain = Capture {
+        jpeg: vec![2; 4],
+        raw: None,
+    };
+    assert_eq!(project.add_frame(take, 9, &plain, None).unwrap(), 2);
+    // Inserted at the capture point, not the end (AT13).
+    assert_eq!(
+        project.add_frame(take, 1, &capture(3), Some(&[8])).unwrap(),
+        3
+    );
+    assert_eq!(frames(&project, take), [1, 3, 2]);
+
+    let dir = project.root().join("0001_SCENE/0001_SHOT/0001_TAKE/frames");
+    assert_eq!(
+        fs::read(dir.join("preview/high_res/000001.jpg")).unwrap(),
+        [1; 4]
+    );
+    assert_eq!(
+        fs::read(dir.join("preview/low_res/000001.jpg")).unwrap(),
+        [9]
+    );
+    assert_eq!(fs::read(dir.join("RAW/000001.cr3")).unwrap(), [1; 8]);
+    assert!(!dir.join("preview/low_res/000002.jpg").exists());
+
+    // A frame without a live view preview shows its full JPEG.
+    assert_eq!(
+        project.frame_path(take, 1, Preview::Low),
+        dir.join("preview/low_res/000001.jpg")
+    );
+    assert_eq!(
+        project.frame_path(take, 2, Preview::Low),
+        dir.join("preview/high_res/000002.jpg")
+    );
+    assert_eq!(
+        project.take_thumbnail(take),
+        Some(dir.join("preview/low_res/000001.jpg"))
+    );
+
+    let root = project.root().to_owned();
+    drop(project);
+    let project = Project::open(&root).unwrap();
+    assert_eq!(frames(&project, take), [1, 3, 2]);
+    assert_eq!(
+        project.frame_path(take, 3, Preview::Low),
+        dir.join("preview/low_res/000003.jpg")
+    );
+}
+
+#[test]
+fn frame_numbers_are_never_reused() {
+    let (_dir, mut project, take) = new_take();
+    for byte in 1..=3 {
+        project.add_frame(take, 9, &capture(byte), None).unwrap();
+    }
+    project.set_frames(take, vec![1, 2]).unwrap();
+    assert_eq!(project.add_frame(take, 9, &capture(4), None).unwrap(), 4);
+
+    // Even when take.conf lost track of the newest image (P5).
+    let conf = project
+        .root()
+        .join("0001_SCENE/0001_SHOT/0001_TAKE/take.conf");
+    fs::write(&conf, "frames = [1]\n").unwrap();
+    let root = project.root().to_owned();
+    drop(project);
+    let mut project = Project::open(&root).unwrap();
+    assert_eq!(project.add_frame(take, 9, &capture(5), None).unwrap(), 5);
+}
+
+#[test]
+fn removed_frames_go_to_the_trash_and_come_back() {
+    let (_dir, mut project, take) = new_take();
+    for byte in 1..=3 {
+        project
+            .add_frame(take, 9, &capture(byte), Some(&[byte]))
+            .unwrap();
+    }
+    let dir = project.root().join("0001_SCENE/0001_SHOT/0001_TAKE/frames");
+
+    // Holding repeats the image without copying it (AT10).
+    assert!(
+        project
+            .set_frames(take, vec![1, 2, 2, 3])
+            .unwrap()
+            .is_empty()
+    );
+    // Removing one of two held frames keeps the image.
+    assert!(project.set_frames(take, vec![1, 2, 3]).unwrap().is_empty());
+    assert!(dir.join("preview/high_res/000002.jpg").is_file());
+
+    let mut trashed = project.set_frames(take, vec![3, 1]).unwrap();
+    assert_eq!(trashed.len(), 1);
+    for gone in [
+        "preview/high_res/000002.jpg",
+        "preview/low_res/000002.jpg",
+        "RAW/000002.cr3",
+    ] {
+        assert!(!dir.join(gone).exists(), "{gone} is still there");
+    }
+    let trash = project.root().join(".trash");
+    assert!(trash.is_dir());
+    // The image is gone, so it cannot be put back without restoring it.
+    assert!(project.set_frames(take, vec![1, 2, 3]).is_err());
+    // Numbers that were never captured are refused.
+    assert!(project.set_frames(take, vec![1, 7]).is_err());
+
+    project.restore_images(take, &mut trashed).unwrap();
+    assert!(trashed.is_empty());
+    project.set_frames(take, vec![1, 2, 3]).unwrap();
+    assert_eq!(fs::read(dir.join("RAW/000002.cr3")).unwrap(), [2; 8]);
+    assert_eq!(
+        fs::read(dir.join("preview/low_res/000002.jpg")).unwrap(),
+        [2]
+    );
+}
+
+#[test]
+fn frames_follow_renamed_shots() {
+    let (_dir, mut project, take) = new_take();
+    project.add_frame(take, 0, &capture(1), None).unwrap();
+    let mut trashed = project.set_frames(take, Vec::new()).unwrap();
+    project.rename_shot(take.shot_id(), "Wide").unwrap();
+    project.restore_images(take, &mut trashed).unwrap();
+    project.set_frames(take, vec![1]).unwrap();
+    assert!(
+        project
+            .root()
+            .join("0001_SCENE/0001_WIDE/0001_TAKE/frames/preview/high_res/000001.jpg")
+            .is_file()
+    );
+}

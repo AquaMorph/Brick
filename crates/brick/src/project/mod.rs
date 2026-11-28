@@ -6,6 +6,7 @@
 mod copy;
 pub(crate) mod disk;
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{File, TryLockError};
 use std::io;
@@ -25,6 +26,13 @@ const TAKE_CONF: &str = "take.conf";
 const TEST_CONF_EXTENSION: &str = "conf";
 /// Test shots of a shot (P15).
 const TESTS_DIR: &str = "tests";
+/// Full resolution JPEGs of a take's captures, relative to the take (P14).
+const HIGH_RES_DIR: &str = "frames/preview/high_res";
+/// Live view frames grabbed at the moment of capture, relative to the take
+/// (P14).
+const LOW_RES_DIR: &str = "frames/preview/low_res";
+/// Camera RAW files, relative to the take (P14).
+const RAW_DIR: &str = "frames/RAW";
 /// File locked while a project is open, so only one instance can open it (P10).
 const LOCK_FILE: &str = ".lock";
 /// Generated data that can be rebuilt at any time (P9).
@@ -220,6 +228,10 @@ struct TestConf {
 struct TakeConf {
     #[serde(default)]
     notes: String,
+    /// The number the next captured frame gets. Image numbers are never
+    /// reused (P5).
+    #[serde(default = "first_number")]
+    next_frame: u32,
     /// Image numbers in playback order. A held frame repeats an image number
     /// (AT10).
     #[serde(default)]
@@ -342,6 +354,50 @@ pub struct Take {
     number: u32,
     notes: String,
     frames: Vec<u32>,
+    next_frame: u32,
+    /// The captured images in the take's folders, by number (P5).
+    images: BTreeMap<u32, StoredImage>,
+}
+
+/// Which files a captured image has besides its full resolution JPEG (P14).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StoredImage {
+    low_res: bool,
+    /// The RAW file's extension (C4).
+    raw: Option<String>,
+}
+
+impl StoredImage {
+    /// The image's files, relative to its take.
+    fn files(&self, number: u32) -> Vec<PathBuf> {
+        let mut files = vec![Path::new(HIGH_RES_DIR).join(image_name(number, "jpg"))];
+        if self.low_res {
+            files.push(Path::new(LOW_RES_DIR).join(image_name(number, "jpg")));
+        }
+        if let Some(extension) = &self.raw {
+            files.push(Path::new(RAW_DIR).join(image_name(number, extension)));
+        }
+        files
+    }
+}
+
+/// Which preview of a captured frame to show (P14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Preview {
+    /// The live view frame grabbed at the moment of capture.
+    Low,
+    /// The full resolution JPEG.
+    High,
+}
+
+/// A captured image that a frame edit moved to the trash, so the edit can be
+/// undone (P8, AT11).
+#[derive(Debug)]
+pub struct TrashedImage {
+    number: u32,
+    stored: StoredImage,
+    /// Each file relative to its take, and where it is in the trash.
+    files: Vec<(PathBuf, PathBuf)>,
 }
 
 impl Take {
@@ -361,6 +417,7 @@ impl Take {
     fn conf(&self) -> TakeConf {
         TakeConf {
             notes: self.notes.clone(),
+            next_frame: self.next_frame,
             frames: self.frames.clone(),
         }
     }
@@ -477,11 +534,22 @@ impl Project {
     /// thumbnail (DT5).
     pub fn take_thumbnail(&self, id: TakeId) -> Option<PathBuf> {
         let image = *self.take(id)?.frames.first()?;
-        Some(
-            self.take_path(id)
-                .join("frames/preview/low_res")
-                .join(image_name(image, "jpg")),
-        )
+        Some(self.frame_path(id, image, Preview::Low))
+    }
+
+    /// Where a captured frame's preview is stored (P14). A frame without a
+    /// low resolution preview uses its full resolution JPEG for both.
+    pub fn frame_path(&self, id: TakeId, number: u32, preview: Preview) -> PathBuf {
+        let low_res = self
+            .take(id)
+            .and_then(|take| take.images.get(&number))
+            .is_some_and(|image| image.low_res);
+        let dir = if preview == Preview::Low && low_res {
+            LOW_RES_DIR
+        } else {
+            HIGH_RES_DIR
+        };
+        self.take_path(id).join(dir).join(image_name(number, "jpg"))
     }
 
     // Scenes
@@ -723,6 +791,8 @@ impl Project {
             number,
             notes: String::new(),
             frames: Vec::new(),
+            next_frame: 1,
+            images: BTreeMap::new(),
         };
         let take_id = id.take(number);
         let path = self.take_path(take_id);
@@ -733,17 +803,149 @@ impl Project {
     }
 
     pub fn set_take_notes(&mut self, id: TakeId, notes: &str) -> Result<()> {
-        let path = self.take_path(id).join(TAKE_CONF);
+        self.update_take(id, |take| take.notes = notes.to_owned())
+    }
+
+    /// Writes a captured frame into a take and inserts it at position `at`
+    /// of the frame order, or at the end if `at` is past it (AT13). `preview`
+    /// is the live view frame grabbed at the moment of capture as a JPEG
+    /// (P14). Every file is flushed to disk before the frame is added to
+    /// `take.conf` (P7). Returns the frame's image number.
+    pub fn add_frame(
+        &mut self,
+        id: TakeId,
+        at: usize,
+        capture: &Capture,
+        preview: Option<&[u8]>,
+    ) -> Result<u32> {
+        let number = self
+            .take(id)
+            .ok_or_else(|| Error::Invalid("No such take.".into()))?
+            .next_frame;
+        // Reserve the number before any file exists so a crash can never hand
+        // it out twice (P5).
+        self.update_take(id, |take| take.next_frame = number + 1)?;
+        let path = self.take_path(id);
+        let stored = StoredImage {
+            low_res: preview.is_some(),
+            raw: capture.raw.as_ref().map(|(extension, _)| extension.clone()),
+        };
+        if let Some((extension, raw)) = &capture.raw {
+            let dir = path.join(RAW_DIR);
+            disk::create_dir(&dir)?;
+            disk::write_image(&dir.join(image_name(number, extension)), raw)?;
+        }
+        if let Some(preview) = preview {
+            let dir = path.join(LOW_RES_DIR);
+            disk::create_dir(&dir)?;
+            disk::write_image(&dir.join(image_name(number, "jpg")), preview)?;
+        }
+        // The full resolution JPEG goes last: an image counts as captured once
+        // it exists.
+        let dir = path.join(HIGH_RES_DIR);
+        disk::create_dir(&dir)?;
+        disk::write_image(&dir.join(image_name(number, "jpg")), &capture.jpeg)?;
+        self.update_take(id, |take| {
+            take.images.insert(number, stored);
+            let at = at.min(take.frames.len());
+            take.frames.insert(at, number);
+        })?;
+        Ok(number)
+    }
+
+    /// Replaces a take's frame order, for removing, reordering, and holding
+    /// frames (AT10). A number repeated in `frames` is a held frame and does
+    /// not copy the image. Images no longer in the order are moved to the
+    /// trash (P8) and returned, so the edit can be undone with
+    /// [`Project::restore_images`] (AT11).
+    pub fn set_frames(&mut self, id: TakeId, frames: Vec<u32>) -> Result<Vec<TrashedImage>> {
         let take = self
-            .scenes
-            .get_mut(id.scene)
-            .and_then(|s| s.shots.get_mut(id.shot))
-            .and_then(|s| s.takes.iter_mut().find(|t| t.number == id.take))
+            .take(id)
             .ok_or_else(|| Error::Invalid("No such take.".into()))?;
-        let mut conf = take.conf();
-        conf.notes = notes.to_owned();
-        disk::write_config(&path, &conf)?;
-        take.notes = conf.notes;
+        if take.frames == frames {
+            return Ok(Vec::new());
+        }
+        // Frames whose image went missing outside Brick may stay, but no
+        // other image can be added this way.
+        if let Some(n) = frames
+            .iter()
+            .find(|n| !take.images.contains_key(n) && !take.frames.contains(n))
+        {
+            return Err(Error::Invalid(format!(
+                "Image {} is not in this take.",
+                image_name(*n, "jpg")
+            )));
+        }
+        let kept: BTreeSet<u32> = frames.iter().copied().collect();
+        let shown: BTreeSet<u32> = take.frames.iter().copied().collect();
+        let removed: Vec<(u32, StoredImage)> = take
+            .images
+            .iter()
+            .filter(|(n, _)| shown.contains(n) && !kept.contains(n))
+            .map(|(n, stored)| (*n, stored.clone()))
+            .collect();
+
+        // The images go to the trash first, so a crash before the new order
+        // is written leaves frames that show as missing, never images that
+        // are lost (R3, R13).
+        let take_relative = self
+            .shot_relative(id.shot_id())
+            .join(disk::take_dir_name(id.take));
+        let relative: Vec<PathBuf> = removed
+            .iter()
+            .flat_map(|(n, stored)| stored.files(*n))
+            .map(|file| take_relative.join(file))
+            .collect();
+        let mut moved = disk::move_all_to_trash(&self.root, &relative)?.into_iter();
+        let trashed: Vec<TrashedImage> = removed
+            .into_iter()
+            .map(|(number, stored)| {
+                let files = stored
+                    .files(number)
+                    .into_iter()
+                    .zip(moved.by_ref())
+                    .collect();
+                TrashedImage {
+                    number,
+                    stored,
+                    files,
+                }
+            })
+            .collect();
+        let gone: Vec<u32> = trashed.iter().map(|t| t.number).collect();
+        let result = self.update_take(id, |take| {
+            take.frames = frames;
+            take.images.retain(|n, _| !gone.contains(n));
+        });
+        if let Err(e) = result {
+            let mut trashed = trashed;
+            let _ = self.restore_images(id, &mut trashed);
+            return Err(e);
+        }
+        Ok(trashed)
+    }
+
+    /// Moves images a frame edit put in the trash back into their take
+    /// (AT11). Restored images are taken out of `trashed`; on failure the
+    /// rest stay in it. The frames are added back with
+    /// [`Project::set_frames`].
+    pub fn restore_images(&mut self, id: TakeId, trashed: &mut Vec<TrashedImage>) -> Result<()> {
+        if self.take(id).is_none() {
+            return Err(Error::Invalid("No such take.".into()));
+        }
+        let path = self.take_path(id);
+        while let Some(image) = trashed.last_mut() {
+            while let Some((relative, from)) = image.files.last() {
+                disk::restore_from_trash(from, &path.join(relative))?;
+                image.files.pop();
+            }
+            let number = image.number;
+            let stored = image.stored.clone();
+            trashed.pop();
+            if let Some(take) = self.take_mut(id) {
+                take.images.insert(number, stored);
+            }
+        }
         Ok(())
     }
 
@@ -790,6 +992,36 @@ impl Project {
         self.scenes
             .get_mut(scene)
             .ok_or_else(|| Error::Invalid("No such scene.".into()))
+    }
+
+    fn take_mut(&mut self, id: TakeId) -> Option<&mut Take> {
+        self.scenes
+            .get_mut(id.scene)?
+            .shots
+            .get_mut(id.shot)?
+            .takes
+            .iter_mut()
+            .find(|t| t.number == id.take)
+    }
+
+    /// Applies `change` to a take after writing it to `take.conf`.
+    fn update_take(&mut self, id: TakeId, change: impl FnOnce(&mut Take)) -> Result<()> {
+        if self.take(id).is_none() {
+            return Err(Error::Invalid("No such take.".into()));
+        }
+        let path = self.take_path(id).join(TAKE_CONF);
+        let Some(take) = self.take_mut(id) else {
+            return Err(Error::Invalid("No such take.".into()));
+        };
+        let old = (take.notes.clone(), take.next_frame, take.frames.clone());
+        let images = take.images.clone();
+        change(take);
+        if let Err(e) = disk::write_config(&path, &take.conf()) {
+            (take.notes, take.next_frame, take.frames) = old;
+            take.images = images;
+            return Err(e);
+        }
+        Ok(())
     }
 
     fn scene_path(&self, scene: usize) -> PathBuf {
@@ -893,11 +1125,16 @@ fn load_shot(path: &Path, dir: String) -> Result<Shot> {
         if take_dir != disk::take_dir_name(number) {
             continue;
         }
-        let take: TakeConf = disk::read_config(&path.join(&take_dir).join(TAKE_CONF))?;
+        let take_path = path.join(&take_dir);
+        let take: TakeConf = disk::read_config(&take_path.join(TAKE_CONF))?;
+        let images = load_images(&take_path)?;
+        let highest = images.keys().chain(&take.frames).max().map_or(0, |n| *n);
         takes.push(Take {
             number,
             notes: take.notes,
             frames: take.frames,
+            next_frame: take.next_frame.max(highest + 1),
+            images,
         });
     }
     let highest = takes.iter().map(|t| t.number).max().unwrap_or(0);
@@ -930,6 +1167,33 @@ fn load_shot(path: &Path, dir: String) -> Result<Shot> {
         tests,
         takes,
     })
+}
+
+/// The captured images in a take's folders (P14). An image counts as captured
+/// once its full resolution JPEG exists.
+fn load_images(take: &Path) -> Result<BTreeMap<u32, StoredImage>> {
+    let mut images: BTreeMap<u32, StoredImage> =
+        disk::image_numbers(&take.join(HIGH_RES_DIR), "jpg")?
+            .into_iter()
+            .map(|n| {
+                let stored = StoredImage {
+                    low_res: false,
+                    raw: None,
+                };
+                (n, stored)
+            })
+            .collect();
+    for n in disk::image_numbers(&take.join(LOW_RES_DIR), "jpg")? {
+        if let Some(image) = images.get_mut(&n) {
+            image.low_res = true;
+        }
+    }
+    for (n, extension) in disk::image_files(&take.join(RAW_DIR))? {
+        if let Some(image) = images.get_mut(&n) {
+            image.raw = Some(extension);
+        }
+    }
+    Ok(images)
 }
 
 /// The file name of a captured image: a six digit number (P5).

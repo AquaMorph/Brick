@@ -1,14 +1,22 @@
 //! Runs one open camera on its own thread so live view, capture, and
 //! settings changes never block the UI (AT12).
 
+use std::io::Cursor;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread;
+
+use image::codecs::jpeg::JpegEncoder;
 
 use super::{Camera, CameraSettings, Capture, Control, Error, Frame, Result, Setting};
 
 /// How long to wait after a failed live view frame before asking again.
 const RETRY_FRAME: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Longest side of a preview made from the captured image when no live view
+/// frame is available.
+const PREVIEW_SIDE: u32 = 960;
+const PREVIEW_QUALITY: u8 = 90;
 
 /// Asks the UI to redraw, for example when a live view frame arrives.
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
@@ -19,7 +27,11 @@ pub type Opener = Box<dyn FnOnce() -> Result<Box<dyn Camera>> + Send>;
 pub enum Command {
     Set(Setting, String),
     LiveView(bool),
-    Capture,
+    /// Takes a picture. With `preview`, the live view frame at the moment of
+    /// capture is kept as a low resolution JPEG (P14).
+    Capture {
+        preview: bool,
+    },
 }
 
 pub enum Event {
@@ -37,6 +49,8 @@ pub enum Event {
         result: Result<Capture>,
         /// The camera's settings when the picture was taken.
         settings: CameraSettings,
+        /// The low resolution preview, when asked for and it could be made.
+        preview: Option<Vec<u8>>,
     },
     /// The camera could not be opened or was disconnected. The worker has
     /// stopped.
@@ -153,11 +167,22 @@ fn run(
                     _ => None,
                 }
             }
-            Some(Command::Capture) => {
+            Some(Command::Capture { preview }) => {
                 let settings = camera.settings();
+                // The newest live view frame is what the animator saw when
+                // they asked for the capture.
+                let live = live_view.then(|| live.lock().ok()?.frame.clone()).flatten();
                 let result = camera.capture();
                 let lost = disconnected(&result);
-                send(Event::Captured { result, settings });
+                let preview = match (&result, preview) {
+                    (Ok(capture), true) => make_preview(live.as_deref(), capture),
+                    _ => None,
+                };
+                send(Event::Captured {
+                    result,
+                    settings,
+                    preview,
+                });
                 lost
             }
             None => match camera.live_view() {
@@ -182,6 +207,27 @@ fn run(
         }
     }
     let _ = camera.set_live_view(false);
+}
+
+/// The low resolution preview of a capture as a JPEG: the live view frame
+/// grabbed at the moment of capture, or the captured image scaled down when
+/// live view was off (P14).
+fn make_preview(live: Option<&Frame>, capture: &Capture) -> Option<Vec<u8>> {
+    let rgb = match live {
+        Some(frame) => {
+            let rgba = image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba.clone())?;
+            image::DynamicImage::ImageRgba8(rgba).into_rgb8()
+        }
+        None => image::load_from_memory(&capture.jpeg)
+            .ok()?
+            .thumbnail(PREVIEW_SIDE, PREVIEW_SIDE)
+            .into_rgb8(),
+    };
+    let mut jpeg = Vec::new();
+    JpegEncoder::new_with_quality(Cursor::new(&mut jpeg), PREVIEW_QUALITY)
+        .encode_image(&rgb)
+        .ok()?;
+    Some(jpeg)
 }
 
 fn disconnected<T>(result: &Result<T>) -> Option<Error> {
@@ -248,7 +294,7 @@ mod tests {
         );
         assert!(matches!(next(&worker), Event::Opened { .. }));
 
-        worker.send(Command::Capture);
+        worker.send(Command::Capture { preview: true });
         assert!(matches!(
             next(&worker),
             Event::Captured {
@@ -271,5 +317,46 @@ mod tests {
             Arc::new(|| {}),
         );
         assert!(matches!(next(&worker), Event::Lost(Error::Failed(_))));
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+
+    fn jpeg(width: u32, height: u32) -> Vec<u8> {
+        let rgb = image::RgbImage::new(width, height);
+        let mut jpeg = Vec::new();
+        JpegEncoder::new(Cursor::new(&mut jpeg))
+            .encode_image(&rgb)
+            .unwrap();
+        jpeg
+    }
+
+    fn size(jpeg: &[u8]) -> (u32, u32) {
+        let image = image::load_from_memory(jpeg).unwrap();
+        (image.width(), image.height())
+    }
+
+    #[test]
+    fn preview_is_the_live_view_frame() {
+        let capture = Capture {
+            jpeg: jpeg(2000, 1000),
+            raw: None,
+        };
+        let live = Frame {
+            width: 64,
+            height: 48,
+            rgba: vec![255; 64 * 48 * 4],
+        };
+        assert_eq!(
+            size(&make_preview(Some(&live), &capture).unwrap()),
+            (64, 48)
+        );
+        // Without live view the capture is scaled down instead.
+        assert_eq!(
+            size(&make_preview(None, &capture).unwrap()),
+            (PREVIEW_SIDE, PREVIEW_SIDE / 2)
+        );
     }
 }

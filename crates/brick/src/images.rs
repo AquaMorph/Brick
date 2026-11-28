@@ -125,7 +125,8 @@ fn image(slot: Option<&Slot>) -> Image<'_> {
     }
 }
 
-fn load(path: &Path, max_side: u32) -> Result<egui::ColorImage, String> {
+/// Decodes an image, scaled down so neither side is longer than `max_side`.
+pub fn load(path: &Path, max_side: u32) -> Result<egui::ColorImage, String> {
     let mut image = image::open(path).map_err(|e| e.to_string())?;
     if image.width() > max_side || image.height() > max_side {
         image = image.thumbnail(max_side, max_side);
