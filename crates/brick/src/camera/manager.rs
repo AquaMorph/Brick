@@ -53,6 +53,8 @@ pub struct Cameras {
     /// The camera to connect to when it is available (C5).
     preferred: Option<String>,
     retry_at: Option<Instant>,
+    /// Settings changes sent to the camera that it has not answered yet.
+    pending_sets: usize,
     capturing: bool,
     live_view: bool,
     live_sequence: u64,
@@ -94,6 +96,7 @@ impl Cameras {
             settings: CameraSettings::default(),
             preferred,
             retry_at: None,
+            pending_sets: 0,
             capturing: false,
             live_view: false,
             live_sequence: 0,
@@ -151,10 +154,13 @@ impl Cameras {
     }
 
     /// Asks the camera to change a setting. The result arrives as a
-    /// [`CameraEvent`].
-    pub fn set(&self, setting: Setting, value: &str) {
+    /// [`CameraEvent`]. [`Cameras::settings`] shows the new value right away,
+    /// so several changes in a row each start from the one before (CT10).
+    pub fn set(&mut self, setting: Setting, value: &str) {
         if let Some(worker) = self.connected_worker() {
             worker.send(Command::Set(setting, value.to_owned()));
+            self.pending_sets += 1;
+            self.settings.set(setting, Some(value.to_owned()));
         }
     }
 
@@ -258,7 +264,12 @@ impl Cameras {
                 result,
                 settings,
             } => {
-                self.settings = settings;
+                // Until every change is answered, the camera's settings lack
+                // the later ones.
+                self.pending_sets = self.pending_sets.saturating_sub(1);
+                if self.pending_sets == 0 {
+                    self.settings = settings;
+                }
                 match result {
                     Ok(()) => events.push(CameraEvent::SettingChanged(setting, value)),
                     Err(e) => events.push(CameraEvent::Error(format!(
@@ -323,6 +334,7 @@ impl Cameras {
         self.connection = connection;
         self.controls.clear();
         self.settings = CameraSettings::default();
+        self.pending_sets = 0;
         self.capturing = false;
         self.live_sequence = 0;
         self.live_texture = None;

@@ -1,11 +1,12 @@
 //! The Cinematography tab: live view, camera settings for the active shot,
-//! and test shots (W4, CT1-CT8).
+//! and test shots (W4, CT1-CT10).
 
 use eframe::egui::{
     self, Align, Align2, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Stroke, Vec2,
 };
 
-use crate::camera::{Cameras, Connection, Setting};
+use crate::camera::exposure::{Change, Scale, Triangle, format_stops, partner, thirds};
+use crate::camera::{CameraInfo, Cameras, Connection, Control, Setting};
 use crate::direct::{dim, panel_frame, section_title};
 use crate::images::{Image, Images};
 use crate::project::{Project, ShotId, ShotKey};
@@ -21,6 +22,13 @@ const THUMB_SIZE: Vec2 = Vec2::new(150.0, 100.0);
 const TEST_STRIP_HEIGHT: f32 = THUMB_SIZE.y + 58.0;
 /// Shade over the parts of the frame outside an aspect ratio guide.
 const GUIDE_SHADE: Color32 = Color32::from_black_alpha(170);
+/// Width of the camera controls panel.
+const CONTROLS_WIDTH: f32 = 300.0;
+/// Width of a third of a stop on the exposure rulers.
+const THIRD_WIDTH: f32 = 13.0;
+const RULER_HEIGHT: f32 = 28.0;
+/// Width of the lock beside each exposure ruler.
+const LOCK_WIDTH: f32 = 22.0;
 const OVERLAY: Color32 = Color32::from_rgba_premultiplied(110, 110, 110, 110);
 
 /// What the viewer shows.
@@ -102,6 +110,22 @@ pub struct CinematographyTab {
     /// The shot the test shots belong to, so the view resets when the active
     /// shot changes.
     shot: Option<ShotKey>,
+    /// The exposure the EV readout compares against, in thirds of a stop.
+    reference: Option<i32>,
+    /// The shot and camera the reference was taken with.
+    reference_for: Option<(ShotKey, String)>,
+    lock: Lock,
+    /// The exposure ruler being dragged and how far, in points.
+    drag: Option<(Setting, f32)>,
+}
+
+/// The exposure setting held still while the other two trade (CT10).
+struct Lock(Option<Setting>);
+
+impl Default for Lock {
+    fn default() -> Self {
+        Self(Some(Setting::Iso))
+    }
 }
 
 impl CinematographyTab {
@@ -139,9 +163,13 @@ impl CinematographyTab {
 
         egui::Panel::right("cinematography_controls")
             .resizable(false)
-            .exact_size(300.0)
+            .exact_size(CONTROLS_WIDTH)
             .frame(panel_frame())
-            .show(ui, |ui| controls(ui, project, cameras, actions));
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| self.controls(ui, project, cameras, actions));
+            });
 
         egui::Panel::bottom("cinematography_tests")
             .resizable(false)
@@ -484,6 +512,310 @@ impl CinematographyTab {
                 });
             });
     }
+
+    /// The camera picker, settings, and test shot button (C5, CT1, CT5, CT7,
+    /// CT9, CT10).
+    fn controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        project: &Project,
+        cameras: &Cameras,
+        actions: &mut Vec<Action>,
+    ) {
+        camera_picker(ui, cameras, actions);
+
+        ui.add_space(20.0);
+        ui.label(section_title("Camera settings"));
+        ui.add_space(4.0);
+        let active = project.active().map(|take| take.shot_id());
+        let active_shot = active.and_then(|id| Some((project.scene(id.scene)?, project.shot(id)?)));
+        match active_shot {
+            Some((scene, shot)) => {
+                ui.label(RichText::new(format!("{}  /  {}", scene.name(), shot.name())).strong());
+            }
+            None => {
+                ui.label(dim("No take active"));
+            }
+        }
+        ui.add_space(8.0);
+
+        let usable = cameras.is_connected() && active_shot.is_some();
+        let settings = cameras.settings();
+        let triangle = Triangle::new(cameras.controls());
+
+        // The reference starts as the shot's exposure with this camera.
+        let context = active_shot
+            .map(|(_, shot)| shot.key())
+            .zip(connected_info(cameras.connection()).map(|info| info.id.clone()));
+        if self.reference_for != context {
+            self.reference_for = context;
+            self.reference = None;
+            self.drag = None;
+        }
+        let exposure = triangle.exposure(settings);
+        if self.reference.is_none() && usable {
+            self.reference = exposure;
+        }
+
+        if cameras.controls().is_empty() {
+            ui.label(dim("Connect a camera to change its settings."));
+        } else {
+            ui.add_enabled_ui(usable, |ui| {
+                self.exposure(ui, &triangle, cameras, exposure, actions);
+                let mut others = cameras
+                    .controls()
+                    .iter()
+                    .filter(|c| triangle.scale(c.setting).is_none())
+                    .peekable();
+                if others.peek().is_some() && !triangle.scales().is_empty() {
+                    ui.add_space(12.0);
+                    ui.label(section_title("Image"));
+                    ui.add_space(4.0);
+                }
+                for control in others {
+                    setting_row(ui, control, settings.get(control.setting), actions);
+                }
+            });
+            ui.add_space(4.0);
+            if active_shot.is_none() {
+                ui.label(dim(
+                    "Make a take active on the Direct tab to change settings.",
+                ));
+            } else {
+                ui.label(dim(
+                    "Saved with the shot. Every take of this shot uses these settings.",
+                ));
+            }
+        }
+
+        ui.add_space(20.0);
+        ui.label(section_title("Test shot"));
+        ui.add_space(4.0);
+        let capturing = cameras.is_capturing();
+        let label = if capturing {
+            "Capturing…"
+        } else {
+            "Take test shot"
+        };
+        let button = egui::Button::new(RichText::new(label).strong())
+            .fill(theme::BRICK)
+            .min_size(Vec2::new(ui.available_width(), 36.0));
+        if ui
+            .add_enabled(usable && !capturing, button)
+            .on_disabled_hover_text("Needs a connected camera and an active take.")
+            .clicked()
+        {
+            actions.push(Action::TestShot);
+        }
+        ui.add_space(4.0);
+        ui.label(dim("Saved in the shot's tests folder, never in a take."));
+    }
+
+    /// The exposure rulers: shutter speed, aperture, and ISO side by side on
+    /// one scale of stops under a fixed center line (CT9, CT10).
+    fn exposure(
+        &mut self,
+        ui: &mut egui::Ui,
+        triangle: &Triangle,
+        cameras: &Cameras,
+        exposure: Option<i32>,
+        actions: &mut Vec<Action>,
+    ) {
+        let settings = cameras.settings();
+        let scales = triangle.scales();
+        if scales.is_empty() {
+            return;
+        }
+        let lock = if triangle.is_complete() {
+            self.lock.0
+        } else {
+            None
+        };
+        let partner_of = |setting| lock.and_then(|locked| partner(locked, setting));
+        let current = |setting| settings.get(setting).and_then(|v| thirds(setting, v));
+
+        // While a ruler is dragged, show where it would land.
+        let preview: Option<Change> = self.drag.and_then(|(setting, px)| {
+            let target = current(setting)? + (px / THIRD_WIDTH).round() as i32;
+            triangle.nearest(settings, setting, target, partner_of(setting))
+        });
+        let shown = |setting| {
+            preview
+                .iter()
+                .flatten()
+                .find(|(s, _)| *s == setting)
+                .map(|(_, v)| v.as_str())
+                .or_else(|| settings.get(setting))
+        };
+
+        // The values, each a menu of every choice, and the exposure.
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            for (i, scale) in scales.iter().enumerate() {
+                let setting = scale.setting;
+                if i > 0 {
+                    ui.label(dim("|"));
+                }
+                let value = shown(setting).unwrap_or("—");
+                let text = if setting == Setting::Iso {
+                    format!("ISO {value}")
+                } else {
+                    value.to_owned()
+                };
+                let Some(control) = cameras.controls().iter().find(|c| c.setting == setting) else {
+                    continue;
+                };
+                ui.add_enabled_ui(lock != Some(setting), |ui| {
+                    ui.menu_button(RichText::new(text).strong(), |ui| {
+                        for choice in &control.choices {
+                            let change =
+                                triangle.change_to(settings, setting, choice, partner_of(setting));
+                            let selected = Some(choice.as_str()) == settings.get(setting);
+                            let item = egui::Button::selectable(selected, choice);
+                            if ui.add_enabled(change.is_some(), item).clicked() {
+                                if !selected && let Some(change) = change {
+                                    apply(actions, &change);
+                                }
+                                ui.close();
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text(setting.label());
+                });
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let (text, offset) = match exposure.zip(self.reference) {
+                    Some((exposure, reference)) => {
+                        let offset = exposure - reference;
+                        (ev_text(offset), offset)
+                    }
+                    None => ("— EV".to_owned(), 0),
+                };
+                let color = if offset == 0 {
+                    theme::TEXT
+                } else {
+                    theme::BRICK_HOVER
+                };
+                let button = egui::Button::new(RichText::new(text).color(color).strong())
+                    .stroke(Stroke::new(1.0, theme::BORDER))
+                    .fill(theme::BACKGROUND)
+                    .min_size(Vec2::new(76.0, 24.0));
+                let response = ui
+                    .add(button)
+                    .on_hover_text("Exposure compared with the shot. Click to make this 0 EV.");
+                if response.clicked() {
+                    self.reference = exposure;
+                }
+            });
+        });
+        ui.add_space(8.0);
+
+        let show_locks = triangle.is_complete();
+        let lock_width = if show_locks { LOCK_WIDTH } else { 0.0 };
+        let width = ui.available_width() - lock_width - ui.spacing().item_spacing.x;
+        let mut rulers = Rect::NOTHING;
+        for scale in scales {
+            let setting = scale.setting;
+            let locked = lock == Some(setting);
+            // The dragged ruler follows the pointer; its partner moves the
+            // other way to where it would land.
+            let offset = match self.drag {
+                Some((dragged, px)) if dragged == setting => px,
+                _ => shown(setting)
+                    .and_then(|v| thirds(setting, v))
+                    .zip(current(setting))
+                    .map_or(0.0, |(to, from)| (to - from) as f32 * THIRD_WIDTH),
+            };
+            ui.horizontal(|ui| {
+                let response = ruler(ui, width, scale, current(setting), offset, locked);
+                rulers = rulers.union(response.rect);
+                let response = response.on_hover_text(if locked {
+                    format!("{} is locked.", setting.label())
+                } else {
+                    format!("Drag to change {}.", setting.label().to_lowercase())
+                });
+                if let Some(now) = current(setting).filter(|_| !locked) {
+                    if response.drag_started() {
+                        self.drag = Some((setting, 0.0));
+                    }
+                    if let Some((dragged, px)) = &mut self.drag
+                        && *dragged == setting
+                        && response.dragged()
+                    {
+                        *px += response.drag_delta().x;
+                    }
+                    let target = if response.drag_stopped() {
+                        self.drag
+                            .take()
+                            .map(|(_, px)| now + (px / THIRD_WIDTH).round() as i32)
+                    } else if response.clicked() {
+                        // Clicking a value on the ruler picks it.
+                        response.interact_pointer_pos().map(|pos| {
+                            now - ((pos.x - response.rect.center().x) / THIRD_WIDTH).round() as i32
+                        })
+                    } else {
+                        None
+                    };
+                    if let Some(target) = target
+                        && let Some(change) =
+                            triangle.nearest(settings, setting, target, partner_of(setting))
+                        && change
+                            .iter()
+                            .any(|(s, v)| settings.get(*s) != Some(v.as_str()))
+                    {
+                        apply(actions, &change);
+                    }
+                }
+                if show_locks && lock_button(ui, locked, setting).clicked() {
+                    self.lock.0 = if locked { None } else { Some(setting) };
+                    self.drag = None;
+                }
+            });
+        }
+
+        // The fixed center line the rulers slide under.
+        let painter = ui.painter();
+        let x = rulers.center().x;
+        let color = theme::BRICK_HOVER;
+        painter.line_segment(
+            [Pos2::new(x, rulers.top()), Pos2::new(x, rulers.bottom())],
+            Stroke::new(1.5, color),
+        );
+        for (y, dir) in [(rulers.top(), 1.0), (rulers.bottom(), -1.0)] {
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    Pos2::new(x, y),
+                    Pos2::new(x - 5.0, y - 7.0 * dir),
+                    Pos2::new(x + 5.0, y - 7.0 * dir),
+                ],
+                color,
+                Stroke::NONE,
+            ));
+        }
+
+        ui.add_space(4.0);
+        let hint = match lock {
+            Some(locked) => {
+                let mut names = scales
+                    .iter()
+                    .map(|s| s.setting)
+                    .filter(|s| *s != locked)
+                    .map(short_label);
+                let first = names.next().unwrap_or_default();
+                let second = names.next().unwrap_or_default();
+                let second = if second == "ISO" {
+                    second.to_owned()
+                } else {
+                    second.to_lowercase()
+                };
+                format!("{first} and {second} trade at the same exposure.")
+            }
+            None if show_locks => "Lock one setting to trade the other two.".to_owned(),
+            None => "Drag the ruler to change the exposure.".to_owned(),
+        };
+        ui.label(dim(hint).size(11.0));
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -492,16 +824,11 @@ enum Pane {
     Test(u32),
 }
 
-/// The camera picker, settings, and test shot button (C5, CT1, CT5, CT7).
-fn controls(ui: &mut egui::Ui, project: &Project, cameras: &Cameras, actions: &mut Vec<Action>) {
+/// The camera picker (C5).
+fn camera_picker(ui: &mut egui::Ui, cameras: &Cameras, actions: &mut Vec<Action>) {
     ui.label(section_title("Camera"));
     ui.add_space(4.0);
-    let current = match cameras.connection() {
-        Connection::None => None,
-        Connection::Connecting(info) | Connection::Connected(info) | Connection::Lost(info, _) => {
-            Some(info)
-        }
-    };
+    let current = connected_info(cameras.connection());
     let selected = current.map_or("No camera", |info| info.name.as_str());
     egui::ComboBox::from_id_salt("cinematography_camera")
         .selected_text(selected)
@@ -530,82 +857,182 @@ fn controls(ui: &mut egui::Ui, project: &Project, cameras: &Cameras, actions: &m
         Connection::Lost(_, reason) => (format!("Disconnected: {reason}"), theme::BRICK_HOVER),
     };
     ui.label(RichText::new(state).color(color));
+}
 
-    ui.add_space(20.0);
-    ui.label(section_title("Camera settings"));
-    ui.add_space(4.0);
-    let active = project.active().map(|take| take.shot_id());
-    let active_shot = active.and_then(|id| Some((project.scene(id.scene)?, project.shot(id)?)));
-    match active_shot {
-        Some((scene, shot)) => {
-            ui.label(RichText::new(format!("{}  /  {}", scene.name(), shot.name())).strong());
-        }
-        None => {
-            ui.label(dim("No take active"));
+fn connected_info(connection: &Connection) -> Option<&CameraInfo> {
+    match connection {
+        Connection::None => None,
+        Connection::Connecting(info) | Connection::Connected(info) | Connection::Lost(info, _) => {
+            Some(info)
         }
     }
-    ui.add_space(8.0);
+}
 
-    let usable = cameras.is_connected() && active_shot.is_some();
-    let mut shown = 0;
-    for control in cameras.controls() {
-        shown += 1;
-        let value = cameras.settings().get(control.setting).unwrap_or("—");
-        ui.horizontal(|ui| {
-            ui.label(dim(control.setting.label()));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.add_enabled_ui(usable, |ui| {
-                    egui::ComboBox::from_id_salt(("cinematography_setting", control.setting))
-                        .selected_text(value)
-                        .width(120.0)
-                        .show_ui(ui, |ui| {
-                            for choice in &control.choices {
-                                if ui.selectable_label(choice == value, choice).clicked()
-                                    && choice != value
-                                {
-                                    actions.push(Action::Set(control.setting, choice.clone()));
-                                }
-                            }
-                        });
-                });
-            });
-        });
+fn short_label(setting: Setting) -> &'static str {
+    match setting {
+        Setting::ShutterSpeed => "Shutter",
+        Setting::Aperture => "Aperture",
+        Setting::Iso => "ISO",
+        other => other.label(),
     }
-    if shown == 0 {
-        ui.label(dim("Connect a camera to change its settings."));
-    } else if active_shot.is_none() {
-        ui.add_space(4.0);
-        ui.label(dim(
-            "Make a take active on the Direct tab to change settings.",
-        ));
-    } else {
-        ui.add_space(4.0);
-        ui.label(dim(
-            "Saved with the shot. Every take of this shot uses these settings.",
-        ));
-    }
+}
 
-    ui.add_space(20.0);
-    ui.label(section_title("Test shot"));
-    ui.add_space(4.0);
-    let capturing = cameras.is_capturing();
-    let label = if capturing {
-        "Capturing…"
+fn apply(actions: &mut Vec<Action>, change: &Change) {
+    actions.extend(
+        change
+            .iter()
+            .map(|(setting, value)| Action::Set(*setting, value.clone())),
+    );
+}
+
+/// One exposure setting as a ruler of stops sliding under the center line,
+/// brighter values to the left. `offset` moves it, in points.
+fn ruler(
+    ui: &mut egui::Ui,
+    width: f32,
+    scale: &Scale,
+    current: Option<i32>,
+    offset: f32,
+    locked: bool,
+) -> egui::Response {
+    let sense = if locked || current.is_none() {
+        Sense::hover()
     } else {
-        "Take test shot"
+        Sense::click_and_drag()
     };
-    let button = egui::Button::new(RichText::new(label).strong())
-        .fill(theme::BRICK)
-        .min_size(Vec2::new(ui.available_width(), 36.0));
-    if ui
-        .add_enabled(usable && !capturing, button)
-        .on_disabled_hover_text("Needs a connected camera and an active take.")
-        .clicked()
-    {
-        actions.push(Action::TestShot);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, RULER_HEIGHT), sense);
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 0.0, theme::SURFACE);
+    painter.rect_filled(
+        Rect::from_center_size(rect.center(), Vec2::new(THIRD_WIDTH * 6.0, rect.height())),
+        0.0,
+        Color32::from_white_alpha(5),
+    );
+    let Some(now) = current else {
+        painter.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            "Auto",
+            FontId::proportional(11.0),
+            theme::TEXT_DIM,
+        );
+        return response;
+    };
+    let x = |t: i32| rect.center().x - (t - now) as f32 * THIRD_WIDTH + offset;
+    let base = rect.bottom() - 2.0;
+    let (low, high) = scale.range();
+    for t in low..=high {
+        let x = x(t);
+        if !(rect.left()..=rect.right()).contains(&x) {
+            continue;
+        }
+        let whole = t.rem_euclid(3) == 0;
+        let (height, color) = if whole {
+            (8.0, theme::TEXT_DIM)
+        } else {
+            (4.0, theme::BORDER)
+        };
+        painter.line_segment(
+            [Pos2::new(x, base - height), Pos2::new(x, base)],
+            Stroke::new(1.0, color),
+        );
     }
-    ui.add_space(4.0);
-    ui.label(dim("Saved in the shot's tests folder, never in a take."));
+    let mut labelled = None;
+    for (t, value) in scale.steps() {
+        if t.rem_euclid(3) != 0 || labelled == Some(*t) {
+            continue;
+        }
+        labelled = Some(*t);
+        painter.text(
+            Pos2::new(x(*t), rect.top() + 3.0),
+            Align2::CENTER_TOP,
+            value,
+            FontId::proportional(10.0),
+            theme::TEXT_DIM,
+        );
+    }
+    if locked {
+        painter.rect_filled(rect, 0.0, Color32::from_black_alpha(140));
+    } else if response.hovered() || response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+    response
+}
+
+/// A padlock that locks one exposure setting (CT10).
+fn lock_button(ui: &mut egui::Ui, locked: bool, setting: Setting) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(LOCK_WIDTH, RULER_HEIGHT), Sense::click());
+    let color = if locked {
+        theme::BRICK_HOVER
+    } else if response.hovered() {
+        theme::TEXT
+    } else {
+        theme::TEXT_DIM
+    };
+    let painter = ui.painter_at(rect);
+    let c = rect.center();
+    let body = Rect::from_center_size(c + Vec2::new(0.0, 3.0), Vec2::new(12.0, 9.0));
+    painter.rect_filled(body, 1.0, color);
+    // The shackle, raised out of the body on one side when open.
+    let lift = if locked { 0.0 } else { 4.0 };
+    let stroke = Stroke::new(1.5, color);
+    let (left, right, top) = (
+        body.left() + 3.0,
+        body.right() - 3.0,
+        body.top() - 6.0 - lift,
+    );
+    painter.line_segment(
+        [Pos2::new(left, body.top() - lift), Pos2::new(left, top)],
+        stroke,
+    );
+    painter.line_segment([Pos2::new(left, top), Pos2::new(right, top)], stroke);
+    painter.line_segment(
+        [Pos2::new(right, top), Pos2::new(right, body.top())],
+        stroke,
+    );
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(if locked {
+            format!("Unlock {}", setting.label().to_lowercase())
+        } else {
+            format!(
+                "Lock {} so the other two trade without changing the exposure",
+                setting.label().to_lowercase()
+            )
+        })
+}
+
+/// An exposure difference in stops, such as `+1 1/3 EV`.
+fn ev_text(offset: i32) -> String {
+    let sign = if offset < 0 { "-" } else { "+" };
+    format!("{sign}{} EV", format_stops(offset))
+}
+
+/// A combo box for a setting outside the exposure triangle.
+fn setting_row(
+    ui: &mut egui::Ui,
+    control: &Control,
+    value: Option<&str>,
+    actions: &mut Vec<Action>,
+) {
+    let value = value.unwrap_or("—");
+    ui.horizontal(|ui| {
+        ui.label(dim(control.setting.label()));
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            egui::ComboBox::from_id_salt(("cinematography_setting", control.setting))
+                .selected_text(value)
+                .width(120.0)
+                .show_ui(ui, |ui| {
+                    for choice in &control.choices {
+                        if ui.selectable_label(choice == value, choice).clicked() && choice != value
+                        {
+                            actions.push(Action::Set(control.setting, choice.clone()));
+                        }
+                    }
+                });
+        });
+    });
 }
 
 /// The largest rect with `aspect` (width / height) centered in `rect`.

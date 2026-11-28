@@ -331,6 +331,36 @@ mod tests {
     }
 
     #[test]
+    fn trading_keeps_the_brightness() {
+        use super::super::exposure::{Triangle, partner, thirds};
+        let camera = SimulatedCamera::new();
+        let triangle = Triangle::new(&camera.controls());
+        assert!(triangle.is_complete());
+        let settings = camera.settings();
+        let base = camera.gain();
+        for locked in [Setting::ShutterSpeed, Setting::Aperture, Setting::Iso] {
+            for setting in [Setting::ShutterSpeed, Setting::Aperture, Setting::Iso] {
+                let Some(other) = partner(locked, setting) else {
+                    continue;
+                };
+                let current = thirds(setting, settings.get(setting).unwrap()).unwrap();
+                for target in [current - 3, current + 3] {
+                    let change = triangle
+                        .nearest(&settings, setting, target, Some(other))
+                        .unwrap();
+                    let mut traded = SimulatedCamera::new();
+                    for (s, v) in &change {
+                        traded.set(*s, v).unwrap();
+                    }
+                    // Nominal values such as 1/60 are a little off true stops.
+                    let error = (traded.gain() / base).log2().abs();
+                    assert!(error < 0.2, "{change:?} is {error} stops off");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn capture_is_a_jpeg() {
         let mut camera = SimulatedCamera::new();
         let capture = camera.capture().unwrap();

@@ -5,6 +5,7 @@
 //! settings. Cameras are only ever driven from their own worker thread
 //! ([`worker`]), so a slow camera never blocks the UI (AT12).
 
+pub mod exposure;
 pub mod manager;
 #[cfg(debug_assertions)]
 mod simulated;

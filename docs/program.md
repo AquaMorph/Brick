@@ -121,6 +121,8 @@ Brick is a cross-platform stop motion application for Linux, Windows, and macOS.
 - **CT6** — Test shots can be viewed full size and compared side by side with live view.
 - **CT7** — Camera settings are saved per shot. When a take is made active, the saved settings for its shot are applied to the camera, so every take of a shot uses the same exposure. Settings a shot has not saved yet are taken from the camera and saved when the shot is first used with a camera.
 - **CT8** — Camera settings can only be changed on this tab. The Animation tab does not show them and cannot change them, so settings are never bumped by accident while animating.
+- **CT9** — Shutter speed, aperture, and ISO are shown as rulers stacked on one scale of stops, sliding under a fixed center line that marks the current values. Dragging a ruler or clicking a value on it changes the setting. Above the rulers the current values are shown, each opening a list of every value, beside the exposure in EV compared with the shot's exposure when it was first shown with the camera. Clicking the EV makes the current exposure 0 EV.
+- **CT10** — One of the three settings can be locked, ISO by default. A locked setting cannot change, and moving either of the other two moves the other one the opposite way so the exposure stays the same. Values the other setting cannot make up for are skipped. With nothing locked, each setting changes the exposure on its own.
 
 ## Animation Tab
 

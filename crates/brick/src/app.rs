@@ -624,16 +624,14 @@ impl BrickApp {
         let saved = shot.camera().clone();
         let current = self.cameras.settings().clone();
         let mut complete = saved.clone();
-        for control in self.cameras.controls() {
-            match saved.get(control.setting) {
-                Some(value) if current.get(control.setting) != Some(value) => {
-                    self.cameras.set(control.setting, value);
+        let settings: Vec<Setting> = self.cameras.controls().iter().map(|c| c.setting).collect();
+        for setting in settings {
+            match saved.get(setting) {
+                Some(value) if current.get(setting) != Some(value) => {
+                    self.cameras.set(setting, value);
                 }
                 Some(_) => {}
-                None => complete.set(
-                    control.setting,
-                    current.get(control.setting).map(str::to_owned),
-                ),
+                None => complete.set(setting, current.get(setting).map(str::to_owned)),
             }
         }
         if complete != saved
