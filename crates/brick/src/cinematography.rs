@@ -125,6 +125,9 @@ pub struct CinematographyTab {
     /// Nothing is locked by default.
     lock: Option<Setting>,
     drag: Option<Drag>,
+    /// A setting slider being dragged, with the index of the choice under the
+    /// pointer. The setting changes when it is released.
+    slider: Option<(Setting, usize)>,
 }
 
 /// An exposure ruler being dragged (CT9, CT10).
@@ -583,7 +586,12 @@ impl CinematographyTab {
                     ui.add_space(4.0);
                 }
                 for control in others {
-                    setting_row(ui, control, settings.get(control.setting), actions);
+                    let value = settings.get(control.setting);
+                    if is_slider(control.setting) {
+                        slider_row(ui, control, value, &mut self.slider, actions);
+                    } else {
+                        setting_row(ui, control, value, actions);
+                    }
                 }
             });
             ui.add_space(4.0);
@@ -1131,6 +1139,62 @@ fn ev_text(offset: i32) -> String {
     format!("{sign}{} EV", format_stops(offset))
 }
 
+/// Whether a setting outside the exposure triangle is shown as a slider. Its
+/// choices run in order along one scale, so a slider fits it better than a
+/// list (CT1).
+fn is_slider(setting: Setting) -> bool {
+    matches!(
+        setting,
+        Setting::Gain | Setting::WhiteBalance | Setting::Focus
+    )
+}
+
+/// A slider across a setting's choices. While it is dragged the choice under
+/// the pointer is shown, and the setting changes when it is released, so the
+/// camera and the shot are not changed at every step of the drag.
+fn slider_row(
+    ui: &mut egui::Ui,
+    control: &Control,
+    value: Option<&str>,
+    held: &mut Option<(Setting, usize)>,
+    actions: &mut Vec<Action>,
+) {
+    let Some(last) = control.choices.len().checked_sub(1) else {
+        return;
+    };
+    let current = value.and_then(|v| control.choices.iter().position(|c| c == v));
+    let mut index = match *held {
+        Some((setting, index)) if setting == control.setting => index.min(last),
+        _ => current.unwrap_or(0),
+    };
+    let shown = match (*held, current) {
+        (Some((setting, _)), _) if setting == control.setting => Some(index),
+        (_, current) => current,
+    };
+    ui.horizontal(|ui| {
+        ui.label(dim(control.setting.label()));
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.label(shown.map_or("—", |i| control.choices[i].as_str()));
+        });
+    });
+    ui.spacing_mut().slider_width = ui.available_width();
+    let response = ui.add(egui::Slider::new(&mut index, 0..=last).show_value(false));
+    if response.dragged() {
+        *held = Some((control.setting, index));
+    }
+    // A click on the track or a key press changes it without a drag.
+    let done = response.drag_stopped() || (response.changed() && !response.dragged());
+    if done {
+        if held.is_some_and(|(setting, _)| setting == control.setting) {
+            *held = None;
+        }
+        if current != Some(index) {
+            actions.push(Action::Set(control.setting, control.choices[index].clone()));
+        }
+    }
+    ui.add_space(4.0);
+}
+
 /// A combo box for a setting outside the exposure triangle.
 fn setting_row(
     ui: &mut egui::Ui,
@@ -1315,6 +1379,14 @@ mod tests {
             moved(Setting::Aperture, -px)
         );
         assert_eq!(moved(Setting::Aperture, px), moved(Setting::Iso, -px));
+    }
+
+    #[test]
+    fn ordered_image_settings_are_sliders() {
+        assert!(is_slider(Setting::Gain));
+        assert!(is_slider(Setting::WhiteBalance));
+        assert!(is_slider(Setting::Focus));
+        assert!(!is_slider(Setting::Resolution));
     }
 
     #[test]
