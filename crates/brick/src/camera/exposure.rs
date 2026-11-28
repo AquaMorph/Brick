@@ -215,6 +215,22 @@ impl Triangle {
         balance().unwrap_or_default()
     }
 
+    /// How far `setting` can move from its value, in thirds: as far darker
+    /// and as far brighter as it goes. With a `partner`, only as far as the
+    /// partner can make up for, so whichever runs out first sets the limit.
+    pub fn reach(
+        &self,
+        settings: &CameraSettings,
+        setting: Setting,
+        partner: Option<Setting>,
+    ) -> Option<(i32, i32)> {
+        let now = thirds(setting, settings.get(setting)?)?;
+        let candidates = self.candidates(settings, setting, partner);
+        let darkest = candidates.iter().map(|(t, _)| *t).min()?;
+        let brightest = candidates.iter().map(|(t, _)| *t).max()?;
+        Some((darkest - now, brightest - now))
+    }
+
     /// The change that brings `setting` closest to `target` thirds.
     pub fn nearest(
         &self,
@@ -356,6 +372,27 @@ mod tests {
         assert_eq!(format_stops(2), "2/3");
         assert_eq!(format_stops(-3), "1");
         assert_eq!(format_stops(4), "1 1/3");
+    }
+
+    #[test]
+    fn the_first_to_run_out_sets_the_reach() {
+        let triangle = Triangle::new(&canon());
+        let current = settings("1/60", "f/5.6", "400");
+        // Aperture alone runs f/16 to f/2.8.
+        assert_eq!(
+            triangle.reach(&current, Setting::Aperture, None),
+            Some((-9, 6))
+        );
+        // Shutter only goes to 1/500, three stops faster than 1/60, but
+        // aperture runs out two stops wider, at f/2.8.
+        assert_eq!(
+            triangle.reach(&current, Setting::ShutterSpeed, Some(Setting::Aperture)),
+            Some((-6, 9))
+        );
+        assert_eq!(
+            triangle.reach(&current, Setting::Aperture, Some(Setting::ShutterSpeed)),
+            Some((-9, 6))
+        );
     }
 
     #[test]

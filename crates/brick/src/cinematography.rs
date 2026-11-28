@@ -6,7 +6,7 @@ use eframe::egui::{
 };
 
 use crate::camera::exposure::{Change, Scale, Triangle, format_stops, partner, thirds};
-use crate::camera::{CameraInfo, Cameras, Connection, Control, Setting};
+use crate::camera::{CameraInfo, CameraSettings, Cameras, Connection, Control, Setting};
 use crate::direct::{dim, panel_frame, section_title};
 use crate::images::{Image, Images};
 use crate::project::{Project, ShotId, ShotKey};
@@ -27,6 +27,10 @@ const CONTROLS_WIDTH: f32 = 300.0;
 /// Width of a third of a stop on the exposure rulers.
 const THIRD_WIDTH: f32 = 13.0;
 const RULER_HEIGHT: f32 = 28.0;
+/// Height of the gap between rulers that trades the two (CT10).
+const PAIR_HEIGHT: f32 = 10.0;
+/// The part of a ruler past its last value.
+const OUT_OF_RANGE: Color32 = Color32::from_rgba_premultiplied(60, 14, 10, 160);
 /// Width of the lock beside each exposure ruler.
 const LOCK_WIDTH: f32 = 22.0;
 const OVERLAY: Color32 = Color32::from_rgba_premultiplied(110, 110, 110, 110);
@@ -115,8 +119,21 @@ pub struct CinematographyTab {
     /// The shot and camera the reference was taken with.
     reference_for: Option<(ShotKey, String)>,
     lock: Lock,
-    /// The exposure ruler being dragged and how far, in points.
-    drag: Option<(Setting, f32)>,
+    drag: Option<Drag>,
+}
+
+/// An exposure ruler being dragged (CT9, CT10).
+#[derive(Clone, Copy)]
+struct Drag {
+    setting: Setting,
+    /// The setting that moves the other way to keep the exposure.
+    partner: Option<Setting>,
+    /// How much brighter the setting has been dragged, in points. The
+    /// partner is that much darker.
+    px: f32,
+    /// How far it can go darker and brighter before it, or the partner,
+    /// runs out of values, in points.
+    reach: (f32, f32),
 }
 
 /// The exposure setting held still while the other two trade (CT10).
@@ -611,6 +628,48 @@ impl CinematographyTab {
         ui.label(dim("Saved in the shot's tests folder, never in a take."));
     }
 
+    /// Follows a drag on a ruler, or on the gap between two, and applies it
+    /// when released.
+    fn drag_ruler(
+        &mut self,
+        response: &egui::Response,
+        setting: Setting,
+        partner: Option<Setting>,
+        triangle: &Triangle,
+        settings: &CameraSettings,
+        actions: &mut Vec<Action>,
+    ) {
+        let Some(now) = settings.get(setting).and_then(|v| thirds(setting, v)) else {
+            return;
+        };
+        if response.drag_started()
+            && let Some((darker, brighter)) = triangle.reach(settings, setting, partner)
+        {
+            self.drag = Some(Drag {
+                setting,
+                partner,
+                px: 0.0,
+                reach: (darker as f32 * THIRD_WIDTH, brighter as f32 * THIRD_WIDTH),
+            });
+        }
+        let ours = |drag: &Drag| drag.setting == setting && drag.partner == partner;
+        if let Some(drag) = &mut self.drag
+            && ours(drag)
+            && response.dragged()
+        {
+            // The ruler follows the pointer, and stops where it or its
+            // partner runs out of values.
+            let moved = drag.px - direction(setting) * response.drag_delta().x;
+            drag.px = moved.clamp(drag.reach.0, drag.reach.1);
+        }
+        if response.drag_stopped()
+            && let Some(drag) = self.drag.take_if(|d| ours(d))
+        {
+            let target = now + (drag.px / THIRD_WIDTH).round() as i32;
+            commit(triangle, settings, setting, target, partner, actions);
+        }
+    }
+
     /// The exposure rulers: shutter speed, aperture, and ISO side by side on
     /// one scale of stops under a fixed center line (CT9, CT10).
     fn exposure(
@@ -635,9 +694,9 @@ impl CinematographyTab {
         let current = |setting| settings.get(setting).and_then(|v| thirds(setting, v));
 
         // While a ruler is dragged, show where it would land.
-        let preview: Option<Change> = self.drag.and_then(|(setting, px)| {
-            let target = current(setting)? + (px / THIRD_WIDTH).round() as i32;
-            triangle.nearest(settings, setting, target, partner_of(setting))
+        let preview: Option<Change> = self.drag.and_then(|drag| {
+            let target = current(drag.setting)? + (drag.px / THIRD_WIDTH).round() as i32;
+            triangle.nearest(settings, drag.setting, target, drag.partner)
         });
         let shown = |setting| {
             preview
@@ -715,64 +774,68 @@ impl CinematographyTab {
         let lock_width = if show_locks { LOCK_WIDTH } else { 0.0 };
         let width = ui.available_width() - lock_width - ui.spacing().item_spacing.x;
         let mut rulers = Rect::NOTHING;
-        for scale in scales {
-            let setting = scale.setting;
-            let locked = lock == Some(setting);
-            // The dragged ruler follows the pointer; its partner moves the
-            // other way to where it would land.
-            let offset = match self.drag {
-                Some((dragged, px)) if dragged == setting => px,
-                _ => shown(setting)
-                    .and_then(|v| thirds(setting, v))
-                    .zip(current(setting))
-                    .map_or(0.0, |(to, from)| (to - from) as f32 * THIRD_WIDTH),
-            };
-            ui.horizontal(|ui| {
-                let response = ruler(ui, width, scale, current(setting), offset, locked);
-                rulers = rulers.union(response.rect);
-                let response = response.on_hover_text(if locked {
-                    format!("{} is locked.", setting.label())
-                } else {
-                    format!("Drag to change {}.", setting.label().to_lowercase())
-                });
-                if let Some(now) = current(setting).filter(|_| !locked) {
-                    if response.drag_started() {
-                        self.drag = Some((setting, 0.0));
-                    }
-                    if let Some((dragged, px)) = &mut self.drag
-                        && *dragged == setting
-                        && response.dragged()
-                    {
-                        *px += response.drag_delta().x;
-                    }
-                    let target = if response.drag_stopped() {
-                        self.drag
-                            .take()
-                            .map(|(_, px)| now + (px / THIRD_WIDTH).round() as i32)
-                    } else if response.clicked() {
-                        // Clicking a value on the ruler picks it.
-                        response.interact_pointer_pos().map(|pos| {
-                            now - ((pos.x - response.rect.center().x) / THIRD_WIDTH).round() as i32
-                        })
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (i, scale) in scales.iter().enumerate() {
+                let setting = scale.setting;
+                let locked = lock == Some(setting);
+                // The dragged ruler follows the pointer and its partner moves
+                // the opposite amount of light.
+                let offset = match self.drag {
+                    Some(drag) if drag.setting == setting => drag.px,
+                    Some(drag) if drag.partner == Some(setting) => -drag.px,
+                    _ => 0.0,
+                };
+                ui.horizontal(|ui| {
+                    let response = ruler(ui, width, scale, current(setting), offset, locked);
+                    rulers = rulers.union(response.rect);
+                    let response = response.on_hover_text(if locked {
+                        format!("{} is locked.", setting.label())
                     } else {
-                        None
-                    };
-                    if let Some(target) = target
-                        && let Some(change) =
-                            triangle.nearest(settings, setting, target, partner_of(setting))
-                        && change
-                            .iter()
-                            .any(|(s, v)| settings.get(*s) != Some(v.as_str()))
-                    {
-                        apply(actions, &change);
+                        format!("Drag to change {}.", in_sentence(setting))
+                    });
+                    if !locked {
+                        let partner = partner_of(setting);
+                        self.drag_ruler(&response, setting, partner, triangle, settings, actions);
+                        // Clicking a value on the ruler picks it.
+                        if response.clicked()
+                            && let Some(now) = current(setting)
+                            && let Some(pos) = response.interact_pointer_pos()
+                        {
+                            let along = direction(setting) * (pos.x - response.rect.center().x);
+                            let target = now + (along / THIRD_WIDTH).round() as i32;
+                            commit(triangle, settings, setting, target, partner, actions);
+                        }
                     }
+                    if show_locks && lock_button(ui, locked, setting).clicked() {
+                        self.lock.0 = if locked { None } else { Some(setting) };
+                        self.drag = None;
+                    }
+                });
+
+                // The gap to the next ruler trades the two at the same
+                // exposure, the way a lock on the third does (CT10).
+                let Some(next) = scales.get(i + 1).map(|s| s.setting) else {
+                    continue;
+                };
+                let usable = lock != Some(setting)
+                    && lock != Some(next)
+                    && current(setting).is_some()
+                    && current(next).is_some();
+                let active = self
+                    .drag
+                    .is_some_and(|d| d.setting == setting && d.partner == Some(next));
+                let response = pair_strip(ui, width, usable, active);
+                if usable {
+                    let response = response.on_hover_text(format!(
+                        "Drag to trade {} and {} at the same exposure.",
+                        in_sentence(setting),
+                        in_sentence(next)
+                    ));
+                    self.drag_ruler(&response, setting, Some(next), triangle, settings, actions);
                 }
-                if show_locks && lock_button(ui, locked, setting).clicked() {
-                    self.lock.0 = if locked { None } else { Some(setting) };
-                    self.drag = None;
-                }
-            });
-        }
+            }
+        });
 
         // The fixed center line the rulers slide under.
         let painter = ui.painter();
@@ -811,7 +874,9 @@ impl CinematographyTab {
                 };
                 format!("{first} and {second} trade at the same exposure.")
             }
-            None if show_locks => "Lock one setting to trade the other two.".to_owned(),
+            None if show_locks => {
+                "Drag between two rulers, or lock one, to trade at the same exposure.".to_owned()
+            }
             None => "Drag the ruler to change the exposure.".to_owned(),
         };
         ui.label(dim(hint).size(11.0));
@@ -868,6 +933,84 @@ fn connected_info(connection: &Connection) -> Option<&CameraInfo> {
     }
 }
 
+/// Applies the change that brings `setting` closest to `target` thirds, if
+/// anything changes.
+fn commit(
+    triangle: &Triangle,
+    settings: &CameraSettings,
+    setting: Setting,
+    target: i32,
+    partner: Option<Setting>,
+    actions: &mut Vec<Action>,
+) {
+    if let Some(change) = triangle.nearest(settings, setting, target, partner)
+        && change
+            .iter()
+            .any(|(s, v)| settings.get(*s) != Some(v.as_str()))
+    {
+        apply(actions, &change);
+    }
+}
+
+/// The gap between two exposure rulers, dragged to trade them (CT10).
+fn pair_strip(ui: &mut egui::Ui, width: f32, usable: bool, active: bool) -> egui::Response {
+    let sense = if usable {
+        Sense::click_and_drag()
+    } else {
+        Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, PAIR_HEIGHT), sense);
+    if !usable {
+        return response;
+    }
+    let painter = ui.painter_at(rect);
+    let hot = active || response.hovered();
+    if hot {
+        painter.rect_filled(rect, 0.0, theme::BRICK.gamma_multiply(0.5));
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+    // A dashed grip so the gap reads as something to hold.
+    let color = if hot { theme::TEXT } else { theme::BORDER };
+    let y = rect.center().y;
+    let mut x = rect.left() + 2.0;
+    while x < rect.right() {
+        painter.line_segment(
+            [Pos2::new(x, y), Pos2::new((x + 4.0).min(rect.right()), y)],
+            Stroke::new(1.0, color),
+        );
+        x += 8.0;
+    }
+    response
+}
+
+/// Which way a ruler gets brighter: right for aperture, left for shutter
+/// speed and ISO. Neighbouring rulers run opposite ways, so two traded at the
+/// same exposure slide the same way under the pointer (CT10).
+fn direction(setting: Setting) -> f32 {
+    if setting == Setting::Aperture {
+        1.0
+    } else {
+        -1.0
+    }
+}
+
+/// A value as short as it can be written on a ruler: `60` for 1/60, `5.6`
+/// for f/5.6.
+fn ruler_label(value: &str) -> &str {
+    value
+        .strip_prefix("1/")
+        .or_else(|| value.strip_prefix("f/"))
+        .unwrap_or(value)
+}
+
+/// A setting's name inside a sentence: lower case, except ISO.
+fn in_sentence(setting: Setting) -> String {
+    match setting {
+        Setting::Iso => "ISO".to_owned(),
+        other => other.label().to_lowercase(),
+    }
+}
+
 fn short_label(setting: Setting) -> &'static str {
     match setting {
         Setting::ShutterSpeed => "Shutter",
@@ -885,8 +1028,9 @@ fn apply(actions: &mut Vec<Action>, change: &Change) {
     );
 }
 
-/// One exposure setting as a ruler of stops sliding under the center line,
-/// brighter values to the left. `offset` moves it, in points.
+/// One exposure setting as a ruler of stops sliding under the center line.
+/// Every ruler uses the same scale, so a third of a stop is the same width on
+/// each. `offset` is how much brighter it has been dragged, in points.
 fn ruler(
     ui: &mut egui::Ui,
     width: f32,
@@ -918,11 +1062,24 @@ fn ruler(
         );
         return response;
     };
-    let x = |t: i32| rect.center().x - (t - now) as f32 * THIRD_WIDTH + offset;
+    let dir = direction(scale.setting);
+    let x = |t: f32| rect.center().x + dir * ((t - now as f32) * THIRD_WIDTH - offset);
     let base = rect.bottom() - 2.0;
     let (low, high) = scale.range();
+    // Shade past the ends, where the setting has no more values.
+    let (a, b) = (x(low as f32 - 0.5), x(high as f32 + 0.5));
+    let (start, end) = (a.min(b), a.max(b));
+    for outside in [rect.left()..=start, end..=rect.right()] {
+        if outside.end() > outside.start() {
+            painter.rect_filled(
+                Rect::from_x_y_ranges(outside, rect.y_range()),
+                0.0,
+                OUT_OF_RANGE,
+            );
+        }
+    }
     for t in low..=high {
-        let x = x(t);
+        let x = x(t as f32);
         if !(rect.left()..=rect.right()).contains(&x) {
             continue;
         }
@@ -944,9 +1101,9 @@ fn ruler(
         }
         labelled = Some(*t);
         painter.text(
-            Pos2::new(x(*t), rect.top() + 3.0),
+            Pos2::new(x(*t as f32), rect.top() + 3.0),
             Align2::CENTER_TOP,
-            value,
+            ruler_label(value),
             FontId::proportional(10.0),
             theme::TEXT_DIM,
         );
@@ -994,11 +1151,11 @@ fn lock_button(ui: &mut egui::Ui, locked: bool, setting: Setting) -> egui::Respo
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(if locked {
-            format!("Unlock {}", setting.label().to_lowercase())
+            format!("Unlock {}", in_sentence(setting))
         } else {
             format!(
                 "Lock {} so the other two trade without changing the exposure",
-                setting.label().to_lowercase()
+                in_sentence(setting)
             )
         })
 }
@@ -1113,6 +1270,27 @@ fn spinner(ui: &mut egui::Ui, rect: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn neighbouring_rulers_slide_together() {
+        // Traded, one gets brighter by what the other loses. Neighbouring
+        // rulers run opposite ways, so both move the same way on screen.
+        let moved = |setting, brighter: f32| -direction(setting) * brighter;
+        let px = 26.0;
+        assert_eq!(
+            moved(Setting::ShutterSpeed, px),
+            moved(Setting::Aperture, -px)
+        );
+        assert_eq!(moved(Setting::Aperture, px), moved(Setting::Iso, -px));
+    }
+
+    #[test]
+    fn ruler_labels_are_short() {
+        assert_eq!(ruler_label("1/125"), "125");
+        assert_eq!(ruler_label("f/5.6"), "5.6");
+        assert_eq!(ruler_label("1\"3"), "1\"3");
+        assert_eq!(ruler_label("400"), "400");
+    }
 
     #[test]
     fn fit_keeps_aspect_ratio() {
