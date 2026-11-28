@@ -1,17 +1,20 @@
-//! The File menu (F1, F2) and its shortcuts (F10).
+//! The File and Help menus (F1, F2, F11, F12) and the File menu shortcuts
+//! (F10).
 //!
-//! On macOS the menu lives in the system menu bar, which also handles the
-//! shortcuts. On Linux and Windows it is drawn in a menu bar above the tab
+//! On macOS the menus live in the system menu bar, which also handles the
+//! shortcuts. On Linux and Windows they are drawn in a menu bar above the tab
 //! bar and the shortcuts are read from egui input.
 
 use std::path::PathBuf;
 
 #[cfg(not(target_os = "macos"))]
-use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
+use eframe::egui;
+use eframe::egui::{Key, KeyboardShortcut, Modifiers};
 
+use crate::help::HelpAction;
 use crate::settings::RecentProject;
 
-/// Something the user picked from the File menu, the project picker, or a
+/// Something the user picked from the menu bar, the project picker, or a
 /// shortcut.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileAction {
@@ -22,19 +25,24 @@ pub enum FileAction {
     SaveAs,
     Close,
     Quit,
+    Help(HelpAction),
 }
 
-#[cfg(not(target_os = "macos"))]
 const NEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
-#[cfg(not(target_os = "macos"))]
 const OPEN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
-#[cfg(not(target_os = "macos"))]
 const SAVE_AS: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::S);
-#[cfg(not(target_os = "macos"))]
 const CLOSE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::W);
-#[cfg(not(target_os = "macos"))]
 const QUIT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Q);
+
+/// The File menu shortcuts as listed in Help > Keyboard Shortcuts (F13).
+pub const SHORTCUTS: &[(KeyboardShortcut, &str)] = &[
+    (NEW, "New project"),
+    (OPEN, "Open project"),
+    (SAVE_AS, "Save project as"),
+    (CLOSE, "Close project"),
+    (QUIT, "Quit"),
+];
 
 /// Reads the File menu shortcuts. They work on every tab, even while a text
 /// field has focus (F10).
@@ -57,7 +65,7 @@ pub fn shortcuts(ctx: &egui::Context, has_project: bool) -> Option<FileAction> {
     })
 }
 
-/// The menu bar drawn above the tab bar on Linux and Windows (F1).
+/// The menu bar drawn above the tab bar on Linux and Windows (F1, F11).
 #[cfg(not(target_os = "macos"))]
 pub fn menu_bar(
     ui: &mut egui::Ui,
@@ -90,6 +98,14 @@ pub fn menu_bar(
             ui.separator();
             if menu_item(ui, "Quit", &QUIT, true) {
                 action = Some(FileAction::Quit);
+            }
+        });
+        ui.menu_button("Help", |ui| {
+            ui.set_min_width(240.0);
+            for (help, label) in HelpAction::MENU {
+                if ui.button(*label).clicked() {
+                    action = Some(FileAction::Help(*help));
+                }
             }
         });
     });
@@ -136,7 +152,7 @@ pub fn recent_label(project: &RecentProject) -> String {
 #[cfg(target_os = "macos")]
 pub use native::NativeMenu;
 
-/// The File menu in the macOS system menu bar (F1).
+/// The File and Help menus in the macOS system menu bar (F1, F11).
 #[cfg(target_os = "macos")]
 mod native {
     use std::sync::{Arc, mpsc};
@@ -144,10 +160,11 @@ mod native {
     use muda::accelerator::{Accelerator, Code, Modifiers};
     use muda::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 
-    use super::{FileAction, RecentProject, recent_label};
+    use super::{FileAction, HelpAction, RecentProject, recent_label};
 
     const CLEAR_RECENT: &str = "clear_recent";
     const RECENT_PREFIX: &str = "recent:";
+    const HELP_PREFIX: &str = "help:";
 
     pub struct NativeMenu {
         _menu: Menu,
@@ -179,8 +196,18 @@ mod native {
             let close = MenuItem::with_id("close", "Close Project", false, cmd(Code::KeyW));
             let quit = MenuItem::with_id("quit", "Quit Brick", true, cmd(Code::KeyQ));
 
+            let help_item = |index: usize, label: &str| {
+                MenuItem::with_id(format!("{HELP_PREFIX}{index}"), label, true, None)
+            };
+            // About Brick goes in the application menu on macOS (F12).
+            let about = HelpAction::MENU
+                .iter()
+                .position(|(action, _)| *action == HelpAction::About)
+                .expect("the Help menu has About Brick");
             let app = Submenu::new("Brick", true);
             app.append_items(&[
+                &help_item(about, HelpAction::MENU[about].1),
+                &PredefinedMenuItem::separator(),
                 &PredefinedMenuItem::services(None),
                 &PredefinedMenuItem::separator(),
                 &PredefinedMenuItem::hide(None),
@@ -199,9 +226,16 @@ mod native {
                 &PredefinedMenuItem::separator(),
                 &quit,
             ])?;
+            let help = Submenu::new("Help", true);
+            for (index, (action, label)) in HelpAction::MENU.iter().enumerate() {
+                if *action != HelpAction::About {
+                    help.append(&help_item(index, label))?;
+                }
+            }
             let menu = Menu::new();
-            menu.append_items(&[&app, &file])?;
+            menu.append_items(&[&app, &file, &help])?;
             menu.init_for_nsapp();
+            help.set_as_help_menu_for_nsapp();
 
             // Menu events arrive outside the egui event loop, so wake it up.
             let (sender, events) = mpsc::channel();
@@ -264,6 +298,11 @@ mod native {
                     "close" => Some(FileAction::Close),
                     "quit" => Some(FileAction::Quit),
                     CLEAR_RECENT => Some(FileAction::ClearRecent),
+                    _ if id.starts_with(HELP_PREFIX) => id
+                        .strip_prefix(HELP_PREFIX)
+                        .and_then(|i| i.parse::<usize>().ok())
+                        .and_then(|i| HelpAction::MENU.get(i))
+                        .map(|(action, _)| FileAction::Help(*action)),
                     _ => id
                         .strip_prefix(RECENT_PREFIX)
                         .and_then(|i| i.parse::<usize>().ok())

@@ -1,4 +1,4 @@
-//! The main window: File menu, tab bar, active tab, and status bar (U3, W2),
+//! The main window: File and Help menus, tab bar, active tab, and status bar (U3, W2),
 //! and opening, creating, copying, and closing projects (F1-F10).
 
 use std::path::{Path, PathBuf};
@@ -13,6 +13,7 @@ use crate::camera::{CameraEvent, CameraSettings, Cameras, Capture, Connection, S
 use crate::cinematography::{self, CinematographyTab};
 use crate::direct::DirectTab;
 use crate::file_menu::{self, FileAction};
+use crate::help::{self, HelpAction, HelpDialog};
 use crate::picker;
 use crate::project::{self, Project, ShotKey};
 use crate::project_dialog::{DialogKind, DialogResult, ProjectDialog};
@@ -72,6 +73,8 @@ pub struct BrickApp {
     applied_shot: Option<ShotKey>,
     settings: Settings,
     dialog: Option<ProjectDialog>,
+    /// The open Help menu dialog (F13, F16).
+    help: Option<HelpDialog>,
     copy: Option<CopyJob>,
     /// The window title last sent to the window.
     title: String,
@@ -117,6 +120,7 @@ impl BrickApp {
             applied_shot: None,
             settings,
             dialog: None,
+            help: None,
             copy: None,
             title: String::new(),
             #[cfg(target_os = "macos")]
@@ -179,6 +183,7 @@ impl eframe::App for BrickApp {
         if self.project.is_some()
             && self.tab == Tab::Animation
             && self.dialog.is_none()
+            && self.help.is_none()
             && self.copy.is_none()
         {
             self.animation.read_keys(&ctx);
@@ -197,7 +202,7 @@ impl eframe::App for BrickApp {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            if self.dialog.is_none() && self.copy.is_none() {
+            if self.dialog.is_none() && self.help.is_none() && self.copy.is_none() {
                 actions.extend(file_menu::shortcuts(&ctx, self.project.is_some()));
             }
             egui::Panel::top("menu_bar")
@@ -239,6 +244,7 @@ impl eframe::App for BrickApp {
         });
 
         self.show_dialog(&ctx);
+        self.show_help(&ctx);
         if let Some(copy) = &self.copy {
             copying(&ctx, &copy.dest);
         }
@@ -300,6 +306,40 @@ impl BrickApp {
             }
             FileAction::Close => self.close_project(),
             FileAction::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            FileAction::Help(action) => self.help_action(action),
+        }
+    }
+
+    /// Runs an entry of the Help menu (F12-F16).
+    fn help_action(&mut self, action: HelpAction) {
+        match action {
+            HelpAction::Shortcuts => self.help = Some(HelpDialog::Shortcuts),
+            HelpAction::About => self.help = Some(HelpDialog::About),
+            HelpAction::ReportBug => {
+                if let Err(e) = help::report_bug() {
+                    self.errors
+                        .push(format!("Could not open the bug report page: {e}"));
+                }
+            }
+            HelpAction::OpenLogFolder => {
+                if let Err(e) = help::open_log_folder() {
+                    self.errors.push(e);
+                }
+            }
+        }
+    }
+
+    fn show_help(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = self.help else {
+            return;
+        };
+        match dialog.show(ctx) {
+            Ok(open) => {
+                if !open {
+                    self.help = None;
+                }
+            }
+            Err(e) => self.errors.push(e),
         }
     }
 

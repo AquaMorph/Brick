@@ -10,7 +10,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{
-    self, Align, Align2, Color32, FontId, Key, Layout, Pos2, Rect, RichText, Sense, Stroke, Vec2,
+    self, Align, Align2, Color32, FontId, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Rect,
+    RichText, Sense, Stroke, Vec2,
 };
 
 use crate::camera::{Cameras, Connection};
@@ -71,6 +72,59 @@ enum Command {
     Undo,
     Redo,
 }
+
+/// The Animation tab shortcuts as listed in Help > Keyboard Shortcuts (F13).
+pub const SHORTCUTS: &[(KeyboardShortcut, &str)] = &[
+    (
+        KeyboardShortcut::new(Modifiers::NONE, Key::Enter),
+        "Capture frame",
+    ),
+    (
+        KeyboardShortcut::new(Modifiers::NONE, Key::Space),
+        "Play / stop",
+    ),
+    (
+        KeyboardShortcut::new(Modifiers::NONE, Key::ArrowLeft),
+        "Previous frame",
+    ),
+    (
+        KeyboardShortcut::new(Modifiers::NONE, Key::ArrowRight),
+        "Next frame",
+    ),
+    (
+        KeyboardShortcut::new(Modifiers::NONE, Key::Home),
+        "First frame",
+    ),
+    (
+        KeyboardShortcut::new(Modifiers::NONE, Key::End),
+        "Last frame",
+    ),
+    (
+        KeyboardShortcut::new(Modifiers::NONE, Key::Escape),
+        "Return to live view",
+    ),
+    (
+        KeyboardShortcut::new(Modifiers::NONE, Key::Delete),
+        "Remove selected frame",
+    ),
+    (
+        KeyboardShortcut::new(Modifiers::NONE, Key::O),
+        "Toggle onion skinning",
+    ),
+    (
+        KeyboardShortcut::new(Modifiers::NONE, Key::L),
+        "Toggle loop",
+    ),
+    (
+        KeyboardShortcut::new(Modifiers::NONE, Key::H),
+        "Toggle high resolution playback",
+    ),
+    (KeyboardShortcut::new(Modifiers::COMMAND, Key::Z), "Undo"),
+    (
+        KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Z),
+        "Redo",
+    ),
+];
 
 impl Command {
     /// The command a key press stands for (K2). Ctrl on Linux and Windows,
@@ -1582,6 +1636,16 @@ impl FrameCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn listed_shortcuts_match_the_keys_read() {
+        for (shortcut, label) in SHORTCUTS {
+            assert!(
+                Command::from_key(shortcut.logical_key, shortcut.modifiers).is_some(),
+                "{label} is listed but not read",
+            );
+        }
+    }
 
     fn ms(ms: u64) -> Duration {
         Duration::from_millis(ms)

@@ -6,6 +6,7 @@ mod camera;
 mod cinematography;
 mod direct;
 mod file_menu;
+mod help;
 mod images;
 mod picker;
 mod project;

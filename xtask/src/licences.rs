@@ -1,7 +1,11 @@
 //! The licence check (R6). Every dependency must be usable under a licence
 //! that is not GPL, LGPL, or AGPL.
+//!
+//! Also keeps the list of third party components bundled into the program,
+//! shown in About Brick (F16), up to date.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 use std::process::Command;
 
 use serde_json::Value;
@@ -57,6 +61,22 @@ pub fn run(check: bool) -> Result<(), String> {
         }
     }
 
+    let bundled = bundled_list(&metadata)?;
+    let bundled_path = bundled_path();
+    let current = std::fs::read_to_string(&bundled_path).unwrap_or_default();
+    if current != bundled {
+        if check {
+            violations.push(format!(
+                "{} is out of date, run `cargo xtask licences`",
+                bundled_path.display()
+            ));
+        } else {
+            std::fs::write(&bundled_path, &bundled)
+                .map_err(|e| format!("failed to write {}: {e}", bundled_path.display()))?;
+            println!("wrote {}", bundled_path.display());
+        }
+    }
+
     if violations.is_empty() {
         if check {
             println!("licence check passed: {} packages", packages.len());
@@ -64,7 +84,7 @@ pub fn run(check: bool) -> Result<(), String> {
         Ok(())
     } else {
         let list = violations.join("\n    ");
-        let message = format!("dependencies that may require (A/L)GPL:\n    {list}");
+        let message = format!("licence check failed:\n    {list}");
         if check {
             Err(message)
         } else {
@@ -72,6 +92,78 @@ pub fn run(check: bool) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// Where the list of bundled components is written. The program includes it
+/// at compile time.
+fn bundled_path() -> PathBuf {
+    crate::edsdk::workspace_root().join("crates/brick/third_party_licences.tsv")
+}
+
+/// The third party packages the program is built from on any platform, one
+/// `name<TAB>version<TAB>licence` line each, sorted. Build and dev
+/// dependencies are not part of the program and are left out.
+fn bundled_list(metadata: &Value) -> Result<String, String> {
+    let packages = metadata["packages"]
+        .as_array()
+        .ok_or("cargo metadata has no package list")?;
+    let nodes = metadata["resolve"]["nodes"]
+        .as_array()
+        .ok_or("cargo metadata has no dependency graph")?;
+    let members: BTreeSet<&str> = metadata["workspace_members"]
+        .as_array()
+        .ok_or("cargo metadata has no workspace members")?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    let program = packages
+        .iter()
+        .find(|p| p["name"] == "brick" && members.contains(p["id"].as_str().unwrap_or_default()))
+        .and_then(|p| p["id"].as_str())
+        .ok_or("the workspace has no brick package")?;
+
+    let mut seen = BTreeSet::from([program]);
+    let mut stack = vec![program];
+    while let Some(id) = stack.pop() {
+        let node = nodes
+            .iter()
+            .find(|n| n["id"] == id)
+            .ok_or_else(|| format!("{id} is missing from the dependency graph"))?;
+        for dep in node["deps"].as_array().into_iter().flatten() {
+            let normal = dep["dep_kinds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|kind| kind["kind"].is_null());
+            if let Some(dep_id) = dep["pkg"].as_str()
+                && normal
+                && seen.insert(dep_id)
+            {
+                stack.push(dep_id);
+            }
+        }
+    }
+
+    let mut lines: Vec<String> = packages
+        .iter()
+        .filter(|p| {
+            let id = p["id"].as_str().unwrap_or_default();
+            seen.contains(id) && !members.contains(id)
+        })
+        .map(|p| {
+            format!(
+                "{}\t{}\t{}",
+                p["name"].as_str().unwrap_or("?"),
+                p["version"].as_str().unwrap_or("?"),
+                p["license"].as_str().unwrap_or("unknown"),
+            )
+        })
+        .collect();
+    lines.sort();
+    lines.dedup();
+    let mut list = lines.join("\n");
+    list.push('\n');
+    Ok(list)
 }
 
 /// Whether an SPDX licence expression can be satisfied without any

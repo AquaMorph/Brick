@@ -88,6 +88,12 @@ Brick is a cross-platform stop motion application for Linux, Windows, and macOS.
 - **F8** — Close Project closes the current project and shows the project picker (P2).
 - **F9** — Opening, creating, or closing a project while one is open first closes the current project. No save prompt is shown. Any capture in progress finishes and is written to disk (P7) before the project closes, and playback stops.
 - **F10** — Default shortcuts (Cmd instead of Ctrl on macOS): <kbd>Ctrl</kbd>+<kbd>N</kbd> new project, <kbd>Ctrl</kbd>+<kbd>O</kbd> open project, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> save project as, <kbd>Ctrl</kbd>+<kbd>W</kbd> close project, <kbd>Ctrl</kbd>+<kbd>Q</kbd> quit. These work on every tab, including while a text field has focus.
+- **F11** — The main window has a Help menu after the File menu, placed the same way as the File menu (F1). It is available on every tab and when no project is open.
+- **F12** — The Help menu contains, in order: Keyboard Shortcuts, Report a Bug, Open Log Folder, and About Brick. On macOS, About Brick lives in the application menu instead, following platform convention.
+- **F13** — Keyboard Shortcuts shows a dialog listing every shortcut (F10, K2), grouped by where it applies.
+- **F14** — Report a Bug opens the project's GitHub issues page (https://github.com/AquaMorph/Brick/issues/new) in the operating system's default browser, with the issue body filled in with the program version and the operating system name and version. The program itself sends nothing; the user fills in and submits the issue in the browser (R12).
+- **F15** — Open Log Folder opens the log directory (B4) in the operating system's file manager so logs can be attached to bug reports (F14).
+- **F16** — About Brick shows the program version, the MIT licence (R5), and the licences of bundled third party components, and a link to the project repository (https://github.com/AquaMorph/Brick) that opens in the default browser. It never checks for updates or opens a network connection (R12).
 
 ## Cameras
 
@@ -170,7 +176,7 @@ Brick is a cross-platform stop motion application for Linux, Windows, and macOS.
 
 - **U1** — The UI design must be that of a professional piece of software. The interface design is flat.
 - **U2** — The only supported theme is black. Color accents should be the color of a brick, dark red.
-- **U3** — The main window has the File menu (F1) and tab bar at the top and a status bar at the bottom. The status bar shows the active camera and its connection state, the active scene/shot/take, the project frame rate, and the frame count.
+- **U3** — The main window has the File and Help menus (F1, F11) and tab bar at the top and a status bar at the bottom. The status bar shows the active camera and its connection state, the active scene/shot/take, the project frame rate, and the frame count.
 - **U4** — The minimum supported window size is 1280x720. Layouts must scale correctly on high DPI displays.
 - **U5** — Errors are shown inside the program window and never only in a log.
 

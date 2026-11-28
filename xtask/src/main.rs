@@ -12,8 +12,10 @@ tasks:
   edsdk [ZIP...]       Install the Canon EDSDK from its download archives into
                        edsdk/ (R10, B2). Without arguments, every EDSDK*.zip in
                        the workspace root is used. See docs/edsdk.md.
-  licences [--check]   List dependency licences. With --check, fail if any
-                       dependency can only be used under GPL, LGPL, or AGPL (R6).";
+  licences [--check]   List dependency licences and write the list of bundled
+                       components shown in About Brick (F16). With --check,
+                       fail if any dependency can only be used under GPL, LGPL,
+                       or AGPL (R6), or if the bundled list is out of date.";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
